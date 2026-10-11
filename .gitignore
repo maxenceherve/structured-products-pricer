@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Tooling caches and reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets and local agent configuration
+.env
+.streamlit/secrets.toml
+.claude/
+
+# Data files are never committed: every market input is synthetic and lives in code.
+# If a fixture is ever needed, whitelist it explicitly with a "!path/to/file" line.
+*.csv
+*.xls
+*.xlsx
+*.xlsm
+*.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.log
