@@ -33,7 +33,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-app = ["streamlit>=1.40", "plotly>=5.24"]
+app = ["streamlit>=1.46", "plotly>=5.24", "pandas>=2.2"]
 
 [project.urls]
 Repository = "https://github.com/maxenceherve/structured-products-pricer"
@@ -44,6 +44,9 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.8",
     "mypy>=1.13",
+    "scipy-stubs>=1.17.1.5",
+    "quantlib>=1.34", # independent reference in tests only, never imported by the library
+    "pandas-stubs>=3.0.5.260914",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -70,6 +73,10 @@ select = [
     "RUF", # ruff-specific rules
     "D",   # docstrings (numpy convention, library code only)
 ]
+ignore = [
+    "D105", # magic methods (__add__, __post_init__...) are self-explanatory
+    "D401", # descriptive first lines ("Discount factor e^{-rT}.") read better for formulas
+]
 # Greek letters are used on purpose in docstrings (sigma, rho, nu...).
 allowed-confusables = ["σ", "ρ", "ν", "−", "×"]
 
@@ -86,10 +93,19 @@ convention = "numpy"
 python_version = "3.11"
 strict = true
 files = ["src", "tests", "app"]
+mypy_path = "app"  # Streamlit puts the entry script folder on sys.path
 
 [[tool.mypy.overrides]]
-module = ["plotly.*"]
+module = ["plotly.*", "QuantLib.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Tests: bodies are type-checked, but test functions and helpers need no annotations.
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = true
 
 # --- pytest -----------------------------------------------------------------
 
