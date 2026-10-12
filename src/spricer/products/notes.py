@@ -28,7 +28,7 @@ from spricer._typing import FloatArray
 from spricer.bricks import Brick
 from spricer.conventions import Greeks
 from spricer.market.core import Market
-from spricer.monitoring import Monitoring, require_european
+from spricer.monitoring import Monitoring
 
 NOTIONAL = 100.0  # quantities are per note of notional 100, so values read in percent
 
@@ -94,8 +94,6 @@ class Note:
             raise ValueError("a note needs at least one leg")
         if not (np.isfinite(self.initial) and self.initial > 0.0):
             raise ValueError("the initial level must be positive")
-        if self.monitoring is not None:
-            require_european(self.monitoring)
 
     def discount_spread(self, credit_spread: float) -> float:
         """Extra discount factor ``e^{-sT}`` for the issuer's credit spread."""

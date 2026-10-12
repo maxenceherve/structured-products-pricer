@@ -207,19 +207,27 @@ def test_invalid_terms_raise(build, message):
         build()
 
 
-def test_continuous_barriers_are_refused_until_the_barrier_module():
-    with pytest.raises(NotImplementedError, match="barrier module"):
-        cp.shark_note(
-            protection=100.0,
-            strike=100.0,
-            participation=100.0,
-            barrier=130.0,
-            rebate=5.0,
-            direction="up",
-            maturity=T,
-            initial=INITIAL,
-            monitoring=Monitoring.CONTINUOUS,
+def test_notes_replicated_at_maturity_refuse_a_path_dependent_barrier():
+    for name in ("Bonus note", "Digital coupon note"):
+        with pytest.raises(NotImplementedError, match="European"):
+            cp.find_note(name).build({}, T, INITIAL, Monitoring.CONTINUOUS)
+
+
+def test_sharks_accept_every_monitoring():
+    market = market_at(1.0)
+    spec = cp.find_note("Shark note (up)")
+    values = {
+        mode: float(
+            spec.build(
+                {}, T, INITIAL, mode, 252 * 3 if mode is Monitoring.DISCRETE else None
+            ).value(market)
         )
+        for mode in Monitoring
+    }
+    # observed more often, the up-and-out barrier is touched more often: the note is worth less
+    assert values[Monitoring.EUROPEAN] > values[Monitoring.DISCRETE] > values[Monitoring.CONTINUOUS]
+    roles = [leg.role for leg in spec.build({}, T, INITIAL, Monitoring.CONTINUOUS).legs]
+    assert roles[-1] == "Long one-touch (rebate)"
 
 
 def test_catalog_names_are_unique_and_found():

@@ -74,9 +74,9 @@ def test_invalid_barrier_options_raise(args, message):
         BarrierOption(*args)
 
 
-def test_continuous_monitoring_is_refused_until_the_barrier_module():
-    with pytest.raises(NotImplementedError, match="barrier module"):
-        BarrierOption("call", "up-and-out", 100.0, 120.0, T, Monitoring.CONTINUOUS)
+def test_only_a_european_barrier_option_replicates_with_vanillas():
+    with pytest.raises(ValueError, match="European"):
+        BarrierOption("call", "up-and-out", 100.0, 120.0, T, Monitoring.CONTINUOUS).components()
     assert (
         BarrierOption("put", "down-and-in", 100.0, 70.0, T).label == "Put down-and-in K=100 H=70 1y"
     )

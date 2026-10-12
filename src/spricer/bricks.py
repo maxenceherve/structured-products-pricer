@@ -13,6 +13,7 @@ volatilities constant.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -20,11 +21,12 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from spricer._typing import FloatArray
+from spricer.analytic import barrier as closed_form
 from spricer.analytic import black_scholes as bs
 from spricer.analytic.black_scholes import OptionKind
 from spricer.conventions import Greeks
 from spricer.market.core import Market
-from spricer.monitoring import Monitoring, require_european
+from spricer.monitoring import Monitoring, check_observations
 
 
 def _spot(market: Market, spot: ArrayLike | None) -> FloatArray:
@@ -288,22 +290,64 @@ class DigitalOption:
 BarrierType = Literal["up-and-out", "up-and-in", "down-and-out", "down-and-in"]
 BARRIER_TYPES: tuple[BarrierType, ...] = ("up-and-out", "up-and-in", "down-and-out", "down-and-in")
 
+_BUMP_SPOT, _BUMP_VOL, _BUMP_RATE, _BUMP_TIME = 1e-4, 1e-5, 1e-6, 1e-6
+
+# price(spot, vol_shift, rate, maturity) of a closed form, used for finite-difference Greeks
+ClosedForm = Callable[[FloatArray, float, float, float], FloatArray]
+
+
+def _fd_greeks(
+    price: ClosedForm, market: Market, spot: ArrayLike | None, maturity: float
+) -> Greeks:
+    """Central finite differences of a closed form ``price(spot, vol_shift, rate, maturity)``.
+
+    The closed forms below take one volatility; the volatility shift is parallel and the
+    maturity bump keeps the implied volatility constant, as for the other bricks.
+    """
+    s = _spot(market, spot)
+    h = _BUMP_SPOT * s
+    r = market.rate
+    up, mid, down = (
+        price(s + h, 0.0, r, maturity),
+        price(s, 0.0, r, maturity),
+        price(s - h, 0.0, r, maturity),
+    )
+    dt = min(_BUMP_TIME, 0.5 * maturity) if maturity > 0.0 else 0.0
+    theta = (
+        -(price(s, 0.0, r, maturity + dt) - price(s, 0.0, r, maturity - dt)) / (2.0 * dt)
+        if dt
+        else np.zeros_like(s)
+    )
+    return Greeks(
+        delta=(up - down) / (2.0 * h),
+        gamma=(up - 2.0 * mid + down) / h**2,
+        vega=(price(s, _BUMP_VOL, r, maturity) - price(s, -_BUMP_VOL, r, maturity))
+        / (2.0 * _BUMP_VOL),
+        theta=theta,
+        rho=(price(s, 0.0, r + _BUMP_RATE, maturity) - price(s, 0.0, r - _BUMP_RATE, maturity))
+        / (2.0 * _BUMP_RATE),
+    )
+
 
 @dataclass(frozen=True)
 class BarrierOption:
-    """European call or put activated (``-in``) or cancelled (``-out``) by a barrier ``H``.
+    """Call or put activated (``-in``) or cancelled (``-out``) by a barrier ``H``.
 
     The barrier is touched at or above ``H`` for an up barrier, strictly below ``H`` for a down
-    barrier, the same convention as the digitals. Observed at maturity (European monitoring),
-    a barrier option is exactly a vanilla option restricted to a region of ``S_T``, which
-    replicates with vanilla options and a digital (Haug, ch. 4) and therefore inherits the
-    smile, read at the strike and at the barrier. For instance
+    barrier. How it is observed is part of the option:
 
-    * up-and-in call, ``H >= K``: ``C(H) + (H - K) D_call(H)``;
-    * down-and-in put, ``H <= K``: ``P(H) + (K - H) D_put(H)``;
+    * ``EUROPEAN`` (at maturity only): the option is a vanilla restricted to a region of
+      ``S_T`` and replicates exactly with vanilla options and a digital (Haug, ch. 4), so it
+      inherits the smile, read at the strike and at the barrier. For instance up-and-in call,
+      ``H >= K``: ``C(H) + (H - K) D_call(H)``; down-and-in put, ``H <= K``:
+      ``P(H) + (K - H) D_put(H)``;
+    * ``CONTINUOUS``: closed forms of Reiner and Rubinstein (:mod:`spricer.analytic.barrier`), at
+      the implied volatility of the strike (one volatility for the whole path);
+    * ``DISCRETE`` at ``observations`` equally spaced dates: the continuous formula with the
+      barrier shifted by the Broadie-Glasserman-Kou correction.
 
-    and ``in + out = vanilla`` in every case. Continuous and discrete monitoring use closed
-    forms that come with the barrier module and are refused until then.
+    In every mode ``in + out = vanilla``. :meth:`payoff` is the payoff at maturity of an option
+    whose barrier was not touched before maturity.
     """
 
     kind: OptionKind
@@ -312,6 +356,7 @@ class BarrierOption:
     barrier: float
     maturity: float
     monitoring: Monitoring = Monitoring.EUROPEAN
+    observations: int | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("call", "put"):
@@ -322,7 +367,7 @@ class BarrierOption:
         if not (np.isfinite(self.barrier) and self.barrier > 0.0):
             raise ValueError("barrier must be finite and positive")
         _check_maturity(self.maturity)
-        require_european(self.monitoring)
+        check_observations(self.monitoring, self.observations)
 
     @property
     def is_up(self) -> bool:
@@ -355,7 +400,9 @@ class BarrierOption:
         return np.where(alive, vanilla, 0.0)
 
     def components(self) -> tuple[tuple[float, Brick], ...]:
-        """Replicating vanilla options and digitals, as ``(quantity, brick)`` pairs."""
+        """Replicating vanilla options and digitals of a European barrier option."""
+        if self.monitoring is not Monitoring.EUROPEAN:
+            raise ValueError("only a European barrier option replicates with vanilla options")
         k, h, t = self.strike, self.barrier, self.maturity
         vanilla = EuropeanOption(self.kind, k, t)
         knocked: tuple[tuple[float, Brick], ...]
@@ -404,24 +451,148 @@ class BarrierOption:
         """Volatility of the surface at the barrier."""
         return float(market.vol.vol(self.barrier, self.maturity))
 
+    def effective_barrier(self, vol: float, maturity: float | None = None) -> float:
+        """Barrier used by the closed form (BGK-shifted for discrete monitoring)."""
+        if self.monitoring is not Monitoring.DISCRETE:
+            return self.barrier
+        assert self.observations is not None
+        t = self.maturity if maturity is None else maturity
+        return closed_form.bgk_barrier(
+            self.barrier, "up" if self.is_up else "down", vol, t, self.observations
+        )
+
+    def _closed_form(self, market: Market) -> ClosedForm:
+        sigma = self.implied_vol(market)
+
+        def price(s: FloatArray, vol_shift: float, rate: float, maturity: float) -> FloatArray:
+            vol = sigma + vol_shift
+            return closed_form.barrier_price(
+                self.kind,
+                self.barrier_type,
+                spot=s,
+                strike=self.strike,
+                barrier=self.effective_barrier(vol, maturity),
+                maturity=maturity,
+                rate=rate,
+                dividend_yield=market.dividend_yield,
+                vol=vol,
+            )
+
+        return price
+
     def value(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
-        """Sum of the replicating bricks' values."""
+        """Replication (European) or closed form (continuous, discrete)."""
+        if self.monitoring is not Monitoring.EUROPEAN:
+            return self._closed_form(market)(_spot(market, spot), 0.0, market.rate, self.maturity)
         total = np.zeros_like(_spot(market, spot))
         for q, brick in self.components():
             total = total + q * brick.value(market, spot)
         return total
 
     def skew_adjustment(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
-        """Part of the value coming from the smile slope (through the digital)."""
+        """Part of the value coming from the smile slope (zero for the closed forms)."""
         total = np.zeros_like(_spot(market, spot))
+        if self.monitoring is not Monitoring.EUROPEAN:
+            return total
         for q, brick in self.components():
             if isinstance(brick, DigitalOption):
                 total = total + q * brick.skew_adjustment(market, spot)
         return total
 
     def greeks(self, market: Market, spot: ArrayLike | None = None) -> Greeks:
-        """Sum of the replicating bricks' Greeks."""
+        """Replicating bricks' Greeks, or finite differences of the closed form."""
+        if self.monitoring is not Monitoring.EUROPEAN:
+            return _fd_greeks(self._closed_form(market), market, spot, self.maturity)
         total = Greeks.zero()
         for q, brick in self.components():
             total = total + brick.greeks(market, spot) * q
         return total
+
+
+@dataclass(frozen=True)
+class OneTouch:
+    """Pays one unit of currency at maturity if the barrier is touched.
+
+    Observed at maturity (European) it is a digital: a call digital at ``H`` for an up
+    barrier, a put digital for a down barrier, with the smile slope. Observed continuously it
+    is the reflection-principle closed form, and at discrete dates the same with the BGK
+    shift, at the implied volatility of the barrier.
+    """
+
+    direction: Literal["up", "down"]
+    barrier: float
+    maturity: float
+    monitoring: Monitoring = Monitoring.EUROPEAN
+    observations: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.direction not in ("up", "down"):
+            raise ValueError("direction must be 'up' or 'down'")
+        if not (np.isfinite(self.barrier) and self.barrier > 0.0):
+            raise ValueError("barrier must be finite and positive")
+        _check_maturity(self.maturity)
+        check_observations(self.monitoring, self.observations)
+
+    @property
+    def strike(self) -> None:
+        """A one-touch has a barrier, not a strike."""
+        return None
+
+    @property
+    def label(self) -> str:
+        """Short description."""
+        return f"One-touch {self.direction} H={self.barrier:g} {self.maturity:g}y"
+
+    def _digital(self) -> DigitalOption:
+        return DigitalOption(
+            "call" if self.direction == "up" else "put", self.barrier, self.maturity
+        )
+
+    def payoff(self, spot_at_maturity: ArrayLike) -> FloatArray:
+        """One if the spot at maturity is beyond the barrier (barrier observed at maturity)."""
+        return self._digital().payoff(spot_at_maturity)
+
+    def implied_vol(self, market: Market) -> float:
+        """Volatility of the surface at the barrier."""
+        return float(market.vol.vol(self.barrier, self.maturity))
+
+    def _closed_form(self, market: Market) -> ClosedForm:
+        sigma = self.implied_vol(market)
+
+        def price(s: FloatArray, vol_shift: float, rate: float, maturity: float) -> FloatArray:
+            vol = sigma + vol_shift
+            barrier = self.barrier
+            if self.monitoring is Monitoring.DISCRETE:
+                assert self.observations is not None
+                barrier = closed_form.bgk_barrier(
+                    barrier, self.direction, vol, maturity, self.observations
+                )
+            return closed_form.one_touch_price(
+                self.direction,
+                spot=s,
+                barrier=barrier,
+                maturity=maturity,
+                rate=rate,
+                dividend_yield=market.dividend_yield,
+                vol=vol,
+            )
+
+        return price
+
+    def value(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
+        """Digital (European) or touch probability closed form, discounted."""
+        if self.monitoring is Monitoring.EUROPEAN:
+            return self._digital().value(market, spot)
+        return self._closed_form(market)(_spot(market, spot), 0.0, market.rate, self.maturity)
+
+    def skew_adjustment(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
+        """Smile-slope part of the value (European only)."""
+        if self.monitoring is Monitoring.EUROPEAN:
+            return self._digital().skew_adjustment(market, spot)
+        return np.zeros_like(_spot(market, spot))
+
+    def greeks(self, market: Market, spot: ArrayLike | None = None) -> Greeks:
+        """Digital Greeks, or finite differences of the closed form."""
+        if self.monitoring is Monitoring.EUROPEAN:
+            return self._digital().greeks(market, spot)
+        return _fd_greeks(self._closed_form(market), market, spot, self.maturity)

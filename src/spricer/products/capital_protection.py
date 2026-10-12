@@ -35,9 +35,10 @@ from spricer.bricks import (
     Brick,
     DigitalOption,
     EuropeanOption,
+    OneTouch,
     ZeroCoupon,
 )
-from spricer.monitoring import Monitoring
+from spricer.monitoring import Monitoring, require_european
 from spricer.products.notes import NOTIONAL, Level, LevelKind, Note, NoteLeg
 
 UNCAPPED = None
@@ -81,6 +82,7 @@ class _Builder:
         barrier_pct: float,
         participation_pct: float,
         monitoring: Monitoring,
+        observations: int | None = None,
     ) -> None:
         if participation_pct:
             brick = BarrierOption(
@@ -90,6 +92,7 @@ class _Builder:
                 self._strike(barrier_pct),
                 self.maturity,
                 monitoring,
+                observations,
             )
             self.legs.append(NoteLeg(role, brick, self._units(participation_pct)))
 
@@ -99,6 +102,25 @@ class _Builder:
             self.legs.append(
                 NoteLeg(role, brick, participation_pct / 100.0 * NOTIONAL / self.initial)
             )
+
+    def one_touch(
+        self,
+        role: str,
+        direction: str,
+        barrier_pct: float,
+        amount_pct: float,
+        monitoring: Monitoring,
+        observations: int | None,
+    ) -> None:
+        if amount_pct:
+            brick = OneTouch(
+                direction,  # type: ignore[arg-type]
+                self._strike(barrier_pct),
+                self.maturity,
+                monitoring,
+                observations,
+            )
+            self.legs.append(NoteLeg(role, brick, amount_pct))
 
     def digital(self, role: str, kind: str, strike_pct: float, amount_pct: float) -> None:
         if amount_pct:
@@ -200,11 +222,15 @@ def shark_note(
     maturity: float,
     initial: float,
     monitoring: Monitoring = Monitoring.EUROPEAN,
+    observations: int | None = None,
 ) -> Note:
-    """Participation that stops at a barrier: beyond it, only ``rebate`` is paid on top.
+    """Participation that stops at a barrier: once touched, only ``rebate`` is paid on top.
 
     ``direction`` is ``"up"`` (call participation, barrier above the strike) or ``"down"``
-    (put participation, barrier below the strike).
+    (put participation, barrier below the strike). The barrier is observed at maturity
+    (European), continuously, or at ``observations`` equally spaced dates; the rebate is paid
+    at maturity. The term-sheet formula is the payoff when the barrier is observed at maturity
+    (with a path-dependent barrier, it is the payoff when it was not touched before).
     """
     _positive(protection=protection, strike=strike, barrier=barrier)
     _non_negative(participation=participation, rebate=rebate)
@@ -227,8 +253,17 @@ def shark_note(
         barrier,
         participation,
         monitoring,
+        observations,
     )
-    b.digital(f"Long digital {kind} (rebate)", kind, barrier, rebate)
+    european = monitoring is Monitoring.EUROPEAN
+    b.one_touch(
+        f"Long digital {kind} (rebate)" if european else "Long one-touch (rebate)",
+        direction,
+        barrier,
+        rebate,
+        monitoring,
+        observations,
+    )
 
     def formula(p: FloatArray) -> FloatArray:
         part = participation / 100.0
@@ -266,6 +301,7 @@ def bonus_note(
     The payoff never falls below ``protection``, and a participation above ``strike`` (capped
     at ``cap`` if given) is added in every case.
     """
+    require_european(monitoring, "bonus note")
     _positive(protection=protection, barrier=barrier, bonus=bonus, strike=strike, cap=cap)
     _non_negative(participation=participation)
     if bonus < protection:
@@ -352,6 +388,7 @@ def digital_coupon_note(
     monitoring: Monitoring = Monitoring.EUROPEAN,
 ) -> Note:
     """Pays ``protection`` plus ``coupon`` if the underlying ends at or above ``barrier``."""
+    require_european(monitoring, "digital coupon note")
     _positive(protection=protection, barrier=barrier)
     _non_negative(coupon=coupon)
     b = _Builder(initial, maturity)
@@ -390,13 +427,21 @@ class NoteSpec:
     name: str
     description: str
     params: tuple[NoteParam, ...]
-    builder: Callable[[Mapping[str, float], float, float], Note]
+    builder: Callable[[Mapping[str, float], float, float, Monitoring, int | None], Note]
     has_barrier: bool = False
+    monitoring_choice: bool = False  # True when the barrier can be observed along the path
 
-    def build(self, values: Mapping[str, float], maturity: float, initial: float) -> Note:
+    def build(
+        self,
+        values: Mapping[str, float],
+        maturity: float,
+        initial: float,
+        monitoring: Monitoring = Monitoring.EUROPEAN,
+        observations: int | None = None,
+    ) -> Note:
         """Build the note from parameter values (defaults for missing ones)."""
         full = {p.key: values.get(p.key, p.default) for p in self.params}
-        return self.builder(full, maturity, initial)
+        return self.builder(full, maturity, initial, monitoring, observations)
 
 
 def _cap(v: Mapping[str, float], key: str = "cap", toggle: str = "capped") -> float | None:
@@ -417,7 +462,7 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("capped", "Capped", 1.0, kind="toggle"),
             NoteParam("cap", "Cap (short call strike)", 130.0),
         ),
-        lambda v, t, s0: participation_note(
+        lambda v, t, s0, mon, obs: participation_note(
             protection=v["protection"],
             strike=v["strike"],
             participation=v["participation"],
@@ -436,7 +481,7 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("limited", "Gain limited", 1.0, kind="toggle"),
             NoteParam("floor", "Gain limit (short put strike)", 70.0),
         ),
-        lambda v, t, s0: bearish_participation_note(
+        lambda v, t, s0, mon, obs: bearish_participation_note(
             protection=v["protection"],
             strike=v["strike"],
             participation=v["participation"],
@@ -453,9 +498,9 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("strike", "Long call strike", 100.0),
             PARTICIPATION,
             NoteParam("barrier", "Up-and-out barrier", 130.0),
-            NoteParam("rebate", "Rebate if knocked out", 5.0),
+            NoteParam("rebate", "Rebate if the barrier is touched", 5.0),
         ),
-        lambda v, t, s0: shark_note(
+        lambda v, t, s0, mon, obs: shark_note(
             protection=v["protection"],
             strike=v["strike"],
             participation=v["participation"],
@@ -464,8 +509,11 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             direction="up",
             maturity=t,
             initial=s0,
+            monitoring=mon,
+            observations=obs,
         ),
         has_barrier=True,
+        monitoring_choice=True,
     ),
     NoteSpec(
         "Shark note (down)",
@@ -475,9 +523,9 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("strike", "Long put strike", 100.0),
             PARTICIPATION,
             NoteParam("barrier", "Down-and-out barrier", 70.0),
-            NoteParam("rebate", "Rebate if knocked out", 5.0),
+            NoteParam("rebate", "Rebate if the barrier is touched", 5.0),
         ),
-        lambda v, t, s0: shark_note(
+        lambda v, t, s0, mon, obs: shark_note(
             protection=v["protection"],
             strike=v["strike"],
             participation=v["participation"],
@@ -486,8 +534,11 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             direction="down",
             maturity=t,
             initial=s0,
+            monitoring=mon,
+            observations=obs,
         ),
         has_barrier=True,
+        monitoring_choice=True,
     ),
     NoteSpec(
         "Bonus note",
@@ -502,7 +553,7 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("capped", "Capped", 1.0, kind="toggle"),
             NoteParam("cap", "Cap (short call strike)", 122.0),
         ),
-        lambda v, t, s0: bonus_note(
+        lambda v, t, s0, mon, obs: bonus_note(
             protection=v["protection"],
             barrier=v["barrier"],
             bonus=v["bonus"],
@@ -511,6 +562,7 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             cap=_cap(v),
             maturity=t,
             initial=s0,
+            monitoring=mon,
         ),
         has_barrier=True,
     ),
@@ -525,7 +577,7 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("participation_down", "Downside participation", 100.0),
             NoteParam("floor", "Downside limit (short put strike)", 70.0),
         ),
-        lambda v, t, s0: twin_win_note(
+        lambda v, t, s0, mon, obs: twin_win_note(
             protection=v["protection"],
             strike=v["strike"],
             participation_up=v["participation_up"],
@@ -544,12 +596,13 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
             NoteParam("coupon", "Coupon", 8.0),
             NoteParam("barrier", "Coupon barrier", 100.0),
         ),
-        lambda v, t, s0: digital_coupon_note(
+        lambda v, t, s0, mon, obs: digital_coupon_note(
             protection=v["protection"],
             coupon=v["coupon"],
             barrier=v["barrier"],
             maturity=t,
             initial=s0,
+            monitoring=mon,
         ),
         has_barrier=True,
     ),

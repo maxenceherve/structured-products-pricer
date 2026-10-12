@@ -163,3 +163,18 @@ def test_invalid_terms_show_an_error(app):
     app.number_input(key="widget_cp_Participation note_cap").set_value(90.0).run()
     assert not app.exception
     assert any("cap" in e.value for e in app.error)
+
+
+@pytest.mark.parametrize("choice", ["Continuously", "Daily (252 dates a year)"])
+def test_shark_barrier_observation_can_be_chosen(app, choice):
+    from spricer.monitoring import Monitoring
+
+    open_capital_protection(app)
+    app.pills(key="widget_cp_product").set_value("Shark note (up)").run()
+    app.radio(key="widget_cp_monitoring").set_value(choice).run()
+    app.button(key="cp_price_button").click().run()
+    assert not app.exception
+    mode = Monitoring.CONTINUOUS if choice == "Continuously" else Monitoring.DISCRETE
+    spec = next(s for s in NOTE_CATALOG if s.name == "Shark note (up)")
+    note = spec.build({}, 3.0, 100.0, mode, 756 if mode is Monitoring.DISCRETE else None)
+    assert app.metric[0].value == f"{float(note.value(default_market())):.2f} %"

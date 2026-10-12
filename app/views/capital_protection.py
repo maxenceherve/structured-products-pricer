@@ -11,6 +11,8 @@ import charts
 import note_presentation as npres
 import presentation as pres
 import state
+from spricer.analytic.barrier import bgk_warning
+from spricer.monitoring import Monitoring
 from spricer.products.capital_protection import NOTE_CATALOG, NoteSpec
 from spricer.products.notes import Note
 
@@ -22,6 +24,11 @@ VOLS_EDITOR, VOLS_BASE, VOLS_SOURCE, VOLS = (
     "cp_vols",
 )
 NAMES = [spec.name for spec in NOTE_CATALOG]
+MONITORING_CHOICES = {
+    "At maturity": Monitoring.EUROPEAN,
+    "Continuously": Monitoring.CONTINUOUS,
+    "Daily (252 dates a year)": Monitoring.DISCRETE,
+}
 
 
 def _editor(data: pd.DataFrame, key: str, base_key: str, **kwargs: Any) -> pd.DataFrame:
@@ -110,14 +117,36 @@ def _product() -> tuple[Note | None, str]:
         )
     st.markdown("**Terms** (levels in % of the initial level, amounts in % of the notional)")
     values = _terms(spec)
-    if spec.has_barrier:
-        st.caption(
-            "Barrier observed at maturity (European). Continuous and daily observation come "
-            "with the barrier module."
+    monitoring, observations = Monitoring.EUROPEAN, None
+    if spec.monitoring_choice:
+        choice = state.choice(
+            st.radio,
+            "Barrier observation",
+            "cp_monitoring",
+            list(MONITORING_CHOICES),
+            horizontal=True,
+            help="At maturity: exact replication with the smile. Continuously or daily: "
+            "closed form (Reiner-Rubinstein), daily with the Broadie-Glasserman-Kou "
+            "correction.",
         )
-    fingerprint = pres.signature(name, maturity, initial, sorted(values.items()))
+        monitoring = MONITORING_CHOICES[choice]
+        if monitoring is Monitoring.DISCRETE:
+            observations = max(1, round(252 * maturity))
+            warning = bgk_warning(observations)
+            if warning:
+                st.warning(warning)
+        if monitoring is not Monitoring.EUROPEAN:
+            st.caption(
+                "The chart shows the payoff when the barrier was never touched before maturity; "
+                "once touched, only the protection and the rebate are paid."
+            )
+    elif spec.has_barrier:
+        st.caption("Barrier observed at maturity (European).")
+    fingerprint = pres.signature(
+        name, maturity, initial, sorted(values.items()), monitoring.value, observations
+    )
     try:
-        return spec.build(values, maturity, initial), fingerprint
+        return spec.build(values, maturity, initial, monitoring, observations), fingerprint
     except ValueError as exc:
         st.error(str(exc))
         return None, fingerprint

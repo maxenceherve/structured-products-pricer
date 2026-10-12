@@ -211,8 +211,19 @@ def test_note_vol_overrides_and_decomposition(market):
         .iloc[1]
         .startswith("Long call up-and-out (participation) · K 100% · H 130% · σ ")
     )
-    assert table["Leg"].iloc[2].startswith("Long digital call (rebate) · K 130% · pays 5% · σ ")
+    assert table["Leg"].iloc[2].startswith("Long digital call (rebate) · H 130% · pays 5% · σ ")
     assert table["Leg"].iloc[-1] == "Total"
     assert table["Price (%)"].iloc[-1] == pytest.approx(float(note.value(market, 0.01)))
     assert table["of which skew (%)"].iloc[-1] != 0.0
     assert npres.bond_value(note, market, 0.01) == pytest.approx(100 * np.exp(-0.04 * 3.0))
+
+
+def test_leg_descriptions_of_path_dependent_bricks(market):
+    from spricer.monitoring import Monitoring
+
+    note = cp.find_note("Shark note (up)").build({}, 3.0, 100.0, Monitoring.CONTINUOUS)
+    table = npres.decomposition_table(note, market, 0.0)
+    assert "(one vol, closed form)" in table["Leg"].iloc[1]
+    assert table["Leg"].iloc[2] == "Long one-touch (rebate) · H 130% · pays 5% · σ " + (
+        f"{100 * float(market.vol.vol(130.0, 3.0)):.2f}%"
+    )

@@ -12,9 +12,10 @@ import numpy as np
 import pandas as pd
 
 from presentation import GREEK_HELP
-from spricer.bricks import BarrierOption, DigitalOption, ZeroCoupon
+from spricer.bricks import BarrierOption, DigitalOption, OneTouch, ZeroCoupon
 from spricer.conventions import Greeks, to_desk
 from spricer.market import Market, OverriddenVol
+from spricer.monitoring import Monitoring
 from spricer.products.notes import NOTIONAL, LevelKind, Note, NoteLeg
 
 STRIKE_COLUMN = "Strike (% of initial)"
@@ -97,9 +98,11 @@ def leg_description(note: Note, leg: NoteLeg, market: Market) -> str:
     """
     brick = leg.brick
     parts = [leg.role]
-    if isinstance(brick, ZeroCoupon | DigitalOption):
+    if isinstance(brick, ZeroCoupon | DigitalOption | OneTouch):
         if brick.strike is not None:
             parts.append(f"K {100.0 * brick.strike / note.initial:g}%")
+        if isinstance(brick, OneTouch):
+            parts.append(f"H {100.0 * brick.barrier / note.initial:g}%")
         parts.append(f"pays {abs(leg.quantity):g}%")
     else:
         participation = 100.0 * abs(leg.quantity) * note.initial / NOTIONAL
@@ -109,9 +112,13 @@ def leg_description(note: Note, leg: NoteLeg, market: Market) -> str:
             parts.append(f"K {100.0 * brick.strike / note.initial:g}%")
     if isinstance(brick, BarrierOption):
         parts.append(f"H {100.0 * brick.barrier / note.initial:g}%")
-        parts.append(
-            f"σ {100.0 * brick.implied_vol(market):.2f}% / {100.0 * brick.barrier_vol(market):.2f}%"
-        )
+        if brick.monitoring is Monitoring.EUROPEAN:
+            parts.append(
+                f"σ {100.0 * brick.implied_vol(market):.2f}% / "
+                f"{100.0 * brick.barrier_vol(market):.2f}%"
+            )
+        else:
+            parts.append(f"σ {100.0 * brick.implied_vol(market):.2f}% (one vol, closed form)")
     else:
         vol = brick.implied_vol(market)
         if vol is not None:
@@ -130,7 +137,7 @@ def decomposition_table(note: Note, market: Market, credit_spread: float) -> pd.
         brick = leg.brick
         skew = (
             leg.quantity * float(brick.skew_adjustment(market)) * df
-            if isinstance(brick, DigitalOption | BarrierOption)
+            if isinstance(brick, DigitalOption | BarrierOption | OneTouch)
             else 0.0
         )
         rows.append(
@@ -163,5 +170,5 @@ def bond_value(note: Note, market: Market, credit_spread: float) -> float:
     return sum(
         value
         for leg, value in zip(note.legs, note.leg_values(market, credit_spread), strict=True)
-        if leg.brick.strike is None
+        if isinstance(leg.brick, ZeroCoupon)
     )
