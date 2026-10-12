@@ -3,32 +3,45 @@
 import streamlit as st
 
 import spricer
+import state
 
-st.set_page_config(page_title="Structured Products Pricer", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="Structured Products Pricer",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+state.init()
 
-st.title("Structured Products Pricer")
-st.caption(f"spricer {spricer.__version__} · work in progress")
-
-st.markdown(
-    """
-Price vanilla option strategies and structured products, look at their payoff,
-and break each one down into elementary bricks with their individual price and Greeks.
-
-Every market input (spot, rates, dividends, volatility by strike and maturity, correlations)
-is entered by hand, with editable synthetic defaults. No market data is downloaded.
-"""
+page = st.navigation(
+    {
+        "Pricing": [
+            st.Page(
+                "views/vanilla_options.py",
+                title="Vanilla options",
+                icon=":material/stacked_line_chart:",
+                default=True,
+            ),
+        ],
+        "Market data": [
+            st.Page(
+                "views/volatility_surface.py", title="Volatility surface", icon=":material/tune:"
+            ),
+        ],
+    },
+    position="sidebar",
+    expanded=True,
 )
 
-st.subheader("Coming next")
-st.markdown(
-    """
-- **Vanilla strategies**, grouped by family: vertical spreads, volatility combinations
-  (straddle, strangle, strip, strap), butterflies and condors, option + underlying
-  (covered call, protective put, collar, risk reversal), digitals, and a free-form builder.
-- **Volatility surface**: strike × maturity input grid, smooth interpolation,
-  butterfly and calendar arbitrage checks, implied density.
-- **Structured products**: reverse convertibles, autocallables (Phoenix, Athena),
-  capital protected notes, worst-of baskets, priced by Monte Carlo and checked
-  against a closed-form brick decomposition.
-"""
-)
+with st.sidebar:
+    st.markdown("**Structured products**")
+    st.markdown(
+        ":gray[Capital protection · next]  \n"
+        ":gray[Yield enhancement · coming]  \n"
+        ":gray[Autocallables · coming]  \n"
+        ":gray[Participation · coming]"
+    )
+    st.divider()
+    st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
+
+page.run()
