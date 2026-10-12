@@ -124,3 +124,42 @@ def test_search_without_match_warns(app):
 def test_every_family_is_offered_with_its_products(app):
     families = list(app.pills(key="widget_vanilla_family").options)
     assert families == [f.value for f in Family]
+
+
+# --- Capital protection page ------------------------------------------------------------------
+
+from spricer.products.capital_protection import NOTE_CATALOG  # noqa: E402
+
+
+def open_capital_protection(at):
+    at.switch_page("views/capital_protection.py").run()
+    assert not at.exception
+    return at
+
+
+@pytest.mark.parametrize("spec", NOTE_CATALOG, ids=lambda s: s.name)
+def test_every_note_prices_like_the_library(app, spec):
+    open_capital_protection(app)
+    app.pills(key="widget_cp_product").set_value(spec.name).run()
+    app.button(key="cp_price_button").click().run()
+    assert not app.exception
+    expected = float(spec.build({}, 3.0, 100.0).value(default_market()))
+    assert app.metric[0].value == f"{expected:.2f} %"
+
+
+def test_issuer_spread_discounts_the_note(app):
+    import math
+
+    open_capital_protection(app)
+    app.number_input(key="widget_cp_spread_bp").set_value(100.0).run()
+    app.button(key="cp_price_button").click().run()
+    spec = NOTE_CATALOG[0]
+    expected = math.exp(-0.01 * 3.0) * float(spec.build({}, 3.0, 100.0).value(default_market()))
+    assert app.metric[0].value == f"{expected:.2f} %"
+
+
+def test_invalid_terms_show_an_error(app):
+    open_capital_protection(app)
+    app.number_input(key="widget_cp_Participation note_cap").set_value(90.0).run()
+    assert not app.exception
+    assert any("cap" in e.value for e in app.error)

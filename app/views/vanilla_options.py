@@ -319,7 +319,7 @@ with st.container(border=True):
     )
     st.plotly_chart(charts.payoff_figure(strategy, market, net_of_premium=net))
 
-    st.markdown("#### Brick by brick")
+    st.markdown("#### Brick decomposition")
     table = pres.decomposition_table(strategy, market)
     formats = {
         column: ("{:+.4f}" if column in pres.GREEK_HELP else PERCENT)

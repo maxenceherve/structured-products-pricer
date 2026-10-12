@@ -10,6 +10,7 @@ import presentation
 from spricer._typing import FloatArray
 from spricer.bricks import Underlying
 from spricer.market import InterpolatedVolSurface, Market
+from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
 
 TOTAL_COLOR = "#1f4e79"
@@ -202,5 +203,80 @@ def density_figure(surface: InterpolatedVolSurface, maturity: float) -> go.Figur
         yaxis_title="Probability per 1 % of spot (%)",
         margin={"t": 30},
         showlegend=False,
+    )
+    return fig
+
+
+PERFORMANCE_LEVEL_COLORS = ("#2ca02c", "#d62728", "#ff7f0e", "#9467bd", "#17becf")
+PAYOFF_LEVEL_COLORS = ("#8b0000", "#6a3d9a", "#b15928", "#1f78b4")
+
+
+def note_payoff_figure(note: Note, market: Market) -> go.Figure:
+    """Payoff of a note at maturity against the final performance, with its named levels.
+
+    Vertical lines are levels of the underlying (strike, barrier, cap), horizontal lines levels
+    of the payoff (capital protection, bonus); the grey dotted line is the underlying itself.
+    """
+    today = 100.0 * market.spot / note.initial
+    top = max(200.0, 1.3 * max([today, *(lv.value_pct for lv in note.levels)]))
+    perf = np.linspace(0.0, top, 2001)
+    payoff = note.payoff(perf)
+    y_top = 1.1 * max(float(np.max(payoff)), top)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=perf,
+            name="Delta one",
+            mode="lines",
+            line={"color": DELTA_ONE_COLOR, "dash": "dot", "width": 1.5},
+        )
+    )
+    vertical = horizontal = 0
+    for level in note.levels:
+        if level.kind is LevelKind.PERFORMANCE:
+            color = PERFORMANCE_LEVEL_COLORS[vertical % len(PERFORMANCE_LEVEL_COLORS)]
+            vertical += 1
+            x, y, dash = [level.value_pct] * 2, [0.0, y_top], "dash"
+        else:
+            color = PAYOFF_LEVEL_COLORS[horizontal % len(PAYOFF_LEVEL_COLORS)]
+            horizontal += 1
+            x, y, dash = [0.0, top], [level.value_pct] * 2, "dashdot"
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                name=f"{level.name} {level.value_pct:g}%",
+                mode="lines",
+                hoverinfo="skip",
+                line={"color": color, "dash": dash, "width": 1.5},
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=payoff,
+            name="Payoff",
+            mode="lines",
+            line={"color": TOTAL_COLOR, "width": 4},
+        )
+    )
+    fig.add_vline(
+        x=today,
+        line={"dash": "dot", "color": "black", "width": 1},
+        annotation_text=f"today {today:.1f}%",
+        annotation_position="top",
+    )
+    fig.update_layout(
+        title=f"{note.name} - payoff at maturity",
+        xaxis_title="Underlying at maturity (% of initial level)",
+        yaxis_title="Payoff (% of notional)",
+        xaxis_range=[0.0, top],
+        yaxis_range=[0.0, y_top],
+        legend={"title": {"text": "Legend"}, "x": 1.02, "y": 1.0},
+        margin={"t": 60, "r": 10},
+        hovermode="x unified",
+        height=540,
     )
     return fig

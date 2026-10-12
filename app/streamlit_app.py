@@ -23,6 +23,13 @@ page = st.navigation(
                 default=True,
             ),
         ],
+        "Structured products": [
+            st.Page(
+                "views/capital_protection.py",
+                title="Capital protection",
+                icon=":material/shield:",
+            ),
+        ],
         "Market data": [
             st.Page(
                 "views/volatility_surface.py", title="Volatility surface", icon=":material/tune:"
@@ -34,13 +41,8 @@ page = st.navigation(
 )
 
 with st.sidebar:
-    st.markdown("**Structured products**")
-    st.markdown(
-        ":gray[Capital protection · next]  \n"
-        ":gray[Yield enhancement · coming]  \n"
-        ":gray[Autocallables · coming]  \n"
-        ":gray[Participation · coming]"
-    )
+    st.markdown("**Coming next**")
+    st.markdown(":gray[Yield enhancement]  \n:gray[Autocallables]  \n:gray[Participation]")
     st.divider()
     st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
 

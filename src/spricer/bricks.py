@@ -14,16 +14,17 @@ volatilities constant.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 
 from spricer._typing import FloatArray
 from spricer.analytic import black_scholes as bs
 from spricer.analytic.black_scholes import OptionKind
 from spricer.conventions import Greeks
 from spricer.market.core import Market
+from spricer.monitoring import Monitoring, require_european
 
 
 def _spot(market: Market, spot: ArrayLike | None) -> FloatArray:
@@ -282,3 +283,145 @@ class DigitalOption:
         return bs.digital_greeks(
             self.kind, **self._args(market, spot), vol_slope=self.vol_slope(market)
         )
+
+
+BarrierType = Literal["up-and-out", "up-and-in", "down-and-out", "down-and-in"]
+BARRIER_TYPES: tuple[BarrierType, ...] = ("up-and-out", "up-and-in", "down-and-out", "down-and-in")
+
+
+@dataclass(frozen=True)
+class BarrierOption:
+    """European call or put activated (``-in``) or cancelled (``-out``) by a barrier ``H``.
+
+    The barrier is touched at or above ``H`` for an up barrier, strictly below ``H`` for a down
+    barrier, the same convention as the digitals. Observed at maturity (European monitoring),
+    a barrier option is exactly a vanilla option restricted to a region of ``S_T``, which
+    replicates with vanilla options and a digital (Haug, ch. 4) and therefore inherits the
+    smile, read at the strike and at the barrier. For instance
+
+    * up-and-in call, ``H >= K``: ``C(H) + (H - K) D_call(H)``;
+    * down-and-in put, ``H <= K``: ``P(H) + (K - H) D_put(H)``;
+
+    and ``in + out = vanilla`` in every case. Continuous and discrete monitoring use closed
+    forms that come with the barrier module and are refused until then.
+    """
+
+    kind: OptionKind
+    barrier_type: BarrierType
+    strike: float
+    barrier: float
+    maturity: float
+    monitoring: Monitoring = Monitoring.EUROPEAN
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("call", "put"):
+            raise ValueError(f"kind must be 'call' or 'put', got {self.kind!r}")
+        if self.barrier_type not in BARRIER_TYPES:
+            raise ValueError(f"barrier_type must be one of {BARRIER_TYPES}")
+        _check_strike(self.strike)
+        if not (np.isfinite(self.barrier) and self.barrier > 0.0):
+            raise ValueError("barrier must be finite and positive")
+        _check_maturity(self.maturity)
+        require_european(self.monitoring)
+
+    @property
+    def is_up(self) -> bool:
+        """True for an up barrier."""
+        return self.barrier_type.startswith("up")
+
+    @property
+    def is_in(self) -> bool:
+        """True for a knock-in."""
+        return self.barrier_type.endswith("in")
+
+    @property
+    def label(self) -> str:
+        """Short description."""
+        return (
+            f"{self.kind.capitalize()} {self.barrier_type} K={self.strike:g} "
+            f"H={self.barrier:g} {self.maturity:g}y"
+        )
+
+    def _touched(self, s: FloatArray) -> NDArray[np.bool_]:
+        return np.asarray((s >= self.barrier) if self.is_up else (s < self.barrier))
+
+    def payoff(self, spot_at_maturity: ArrayLike) -> FloatArray:
+        """Vanilla payoff where the option is alive at maturity, zero elsewhere."""
+        s = np.asarray(spot_at_maturity, dtype=np.float64)
+        sign = 1.0 if self.kind == "call" else -1.0
+        vanilla = np.maximum(sign * (s - self.strike), 0.0)
+        touched = self._touched(s)
+        alive = touched if self.is_in else ~touched
+        return np.where(alive, vanilla, 0.0)
+
+    def components(self) -> tuple[tuple[float, Brick], ...]:
+        """Replicating vanilla options and digitals, as ``(quantity, brick)`` pairs."""
+        k, h, t = self.strike, self.barrier, self.maturity
+        vanilla = EuropeanOption(self.kind, k, t)
+        knocked: tuple[tuple[float, Brick], ...]
+        if self.kind == "call":
+            if self.is_up:  # call x 1{S >= H}
+                knocked = (
+                    ((1.0, EuropeanOption("call", h, t)), (h - k, DigitalOption("call", h, t)))
+                    if h >= k
+                    else ((1.0, vanilla),)
+                )
+            else:  # call x 1{S < H}
+                knocked = (
+                    (
+                        (1.0, vanilla),
+                        (-1.0, EuropeanOption("call", h, t)),
+                        (-(h - k), DigitalOption("call", h, t)),
+                    )
+                    if h > k
+                    else ()
+                )
+        elif self.is_up:  # put x 1{S >= H}
+            knocked = (
+                (
+                    (1.0, vanilla),
+                    (-1.0, EuropeanOption("put", h, t)),
+                    (-(k - h), DigitalOption("put", h, t)),
+                )
+                if h < k
+                else ()
+            )
+        else:  # put x 1{S < H}
+            knocked = (
+                ((1.0, EuropeanOption("put", h, t)), (k - h, DigitalOption("put", h, t)))
+                if h <= k
+                else ((1.0, vanilla),)
+            )
+        if self.is_in:
+            return tuple((q, b) for q, b in knocked if q)
+        return ((1.0, vanilla), *((-q, b) for q, b in knocked if q))
+
+    def implied_vol(self, market: Market) -> float:
+        """Volatility of the surface at the strike."""
+        return float(market.vol.vol(self.strike, self.maturity))
+
+    def barrier_vol(self, market: Market) -> float:
+        """Volatility of the surface at the barrier."""
+        return float(market.vol.vol(self.barrier, self.maturity))
+
+    def value(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
+        """Sum of the replicating bricks' values."""
+        total = np.zeros_like(_spot(market, spot))
+        for q, brick in self.components():
+            total = total + q * brick.value(market, spot)
+        return total
+
+    def skew_adjustment(self, market: Market, spot: ArrayLike | None = None) -> FloatArray:
+        """Part of the value coming from the smile slope (through the digital)."""
+        total = np.zeros_like(_spot(market, spot))
+        for q, brick in self.components():
+            if isinstance(brick, DigitalOption):
+                total = total + q * brick.skew_adjustment(market, spot)
+        return total
+
+    def greeks(self, market: Market, spot: ArrayLike | None = None) -> Greeks:
+        """Sum of the replicating bricks' Greeks."""
+        total = Greeks.zero()
+        for q, brick in self.components():
+            total = total + brick.greeks(market, spot) * q
+        return total

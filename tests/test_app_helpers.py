@@ -112,14 +112,19 @@ def test_custom_strategy_rejects_incomplete_legs(market, change, message):
 
 def test_decomposition_table(market):
     straddle = pres.decomposition_table(st.straddle(100.0, T), market)
-    assert list(straddle["Leg"]) == ["Long call", "Long put", "Total"]
+    vol = 100 * float(market.vol.vol(100.0, T))
+    assert list(straddle["Leg"]) == [
+        f"Long call · K 100% · σ {vol:.2f}%",
+        f"Long put · K 100% · σ {vol:.2f}%",
+        "Total",
+    ]
     assert straddle["Price (%)"].iloc[-1] == pytest.approx(straddle["Price (%)"].iloc[:-1].sum())
-    assert "of which skew (%)" not in straddle.columns
-    assert "Pays (%)" not in straddle.columns
+    for column in ("of which skew (%)", "Strike (%)", "Vol (%)", "Pays (%)"):
+        assert column not in straddle.columns
     single = pres.decomposition_table(st.call(100.0, T), market)
-    assert list(single["Leg"]) == ["Long call"]  # no total row for a single leg
+    assert len(single) == 1  # no total row for a single leg
     digital = pres.decomposition_table(st.digital_call(100.0, T, 10.0), market)
-    assert digital["Pays (%)"].iloc[0] == pytest.approx(10.0)
+    assert " · pays 10% · " in digital["Leg"].iloc[0]
     assert digital["of which skew (%)"].iloc[0] > 0.0
 
 
@@ -167,3 +172,47 @@ def test_signature_changes_with_any_input():
     grid = state.default_grid()
     assert pres.signature("Call", 1.0, grid) == pres.signature("Call", 1.0, grid.copy())
     assert pres.signature("Call", 1.0, grid) != pres.signature("Call", 2.0, grid)
+
+
+# --- Notes ------------------------------------------------------------------------------------
+
+import note_presentation as npres  # noqa: E402
+from spricer.products import capital_protection as cp  # noqa: E402
+
+
+def test_note_vol_table_names_the_levels_and_reads_true_moneyness(market):
+    note = cp.find_note("Bonus note").build({}, 3.0, 80.0)  # spot 100 = 125 % of initial
+    table = npres.smile_vols(note, market)
+    assert list(table["Level"]) == ["Bonus barrier", "Long call strike", "Short call strike (cap)"]
+    assert list(table[npres.STRIKE_COLUMN]) == [90.0, 108.0, 122.0]
+    assert table["% of spot"].iloc[0] == pytest.approx(72.0)
+    assert table[npres.VOL_COLUMN].iloc[0] == pytest.approx(100 * float(market.vol.vol(72.0, 3.0)))
+    assert npres.performance_pct(note, market) == pytest.approx(125.0)
+
+
+def test_note_vol_overrides_and_decomposition(market):
+    note = cp.find_note("Shark note (up)").build({}, 3.0, 100.0)
+    smile = npres.smile_vols(note, market)
+    same = npres.with_vols(market, note, smile, smile)
+    assert float(note.value(same)) == pytest.approx(float(note.value(market)), rel=1e-14)
+    edited = smile.copy()
+    edited.loc[1, npres.VOL_COLUMN] = 35.0  # the barrier
+    assert float(note.value(npres.with_vols(market, note, edited, smile))) != float(
+        note.value(market)
+    )
+    edited.loc[1, npres.VOL_COLUMN] = 0.0
+    with pytest.raises(ValueError, match="positive"):
+        npres.with_vols(market, note, edited, smile)
+
+    table = npres.decomposition_table(note, market, 0.01)
+    assert table["Leg"].iloc[0] == "Zero-coupon bond · pays 100%"
+    assert (
+        table["Leg"]
+        .iloc[1]
+        .startswith("Long call up-and-out (participation) · K 100% · H 130% · σ ")
+    )
+    assert table["Leg"].iloc[2].startswith("Long digital call (rebate) · K 130% · pays 5% · σ ")
+    assert table["Leg"].iloc[-1] == "Total"
+    assert table["Price (%)"].iloc[-1] == pytest.approx(float(note.value(market, 0.01)))
+    assert table["of which skew (%)"].iloc[-1] != 0.0
+    assert npres.bond_value(note, market, 0.01) == pytest.approx(100 * np.exp(-0.04 * 3.0))

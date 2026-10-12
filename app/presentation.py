@@ -212,25 +212,27 @@ def display_greeks(strategy: Strategy | Leg, market: Market) -> dict[str, float]
     }
 
 
+def leg_description(leg: Leg, market: Market) -> str:
+    """Leg name with its terms, e.g. 'Long call · K 100% · σ 18.70%'."""
+    parts = [leg_name(leg)]
+    brick = leg.brick
+    if brick.strike is not None:
+        parts.append(f"K {100.0 * brick.strike / market.spot:g}%")
+    if isinstance(brick, DigitalOption | ZeroCoupon):
+        parts.append(f"pays {100.0 * abs(leg.quantity) / market.spot:g}%")
+    vol = brick.implied_vol(market)
+    if vol is not None:
+        parts.append(f"σ {100.0 * vol:.2f}%")
+    return " · ".join(parts)
+
+
 def decomposition_table(strategy: Strategy, market: Market) -> pd.DataFrame:
     """One row per leg and a total row, in % of notional (one unit of underlying)."""
     rows = []
     for leg, valuation in zip(strategy.legs, strategy.decompose(market), strict=True):
-        payout = (
-            100.0 * abs(leg.quantity) / market.spot
-            if isinstance(leg.brick, DigitalOption | ZeroCoupon)
-            else math.nan
-        )
         rows.append(
             {
-                "Leg": leg_name(leg),
-                "Strike (%)": math.nan
-                if valuation.strike is None
-                else 100.0 * valuation.strike / market.spot,
-                "Pays (%)": payout,
-                "Vol (%)": math.nan
-                if valuation.implied_vol is None
-                else 100.0 * valuation.implied_vol,
+                "Leg": leg_description(leg, market),
                 "Price (%)": 100.0 * valuation.value / market.spot,
                 "of which skew (%)": 100.0 * valuation.skew_adjustment / market.spot,
                 **display_greeks(leg, market),
@@ -242,8 +244,6 @@ def decomposition_table(strategy: Strategy, market: Market) -> pd.DataFrame:
         for column in ("Price (%)", "of which skew (%)", *GREEK_HELP):
             total[column] = float(table[column].sum())
         table = pd.concat([table, pd.DataFrame([total])], ignore_index=True)
-    if not np.any(np.isfinite(table["Pays (%)"].to_numpy(dtype=float))):
-        table = table.drop(columns="Pays (%)")
     if not np.any(table["of which skew (%)"].to_numpy(dtype=float)):
         table = table.drop(columns="of which skew (%)")
     return table
