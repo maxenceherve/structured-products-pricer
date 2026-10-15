@@ -15,6 +15,7 @@ from presentation import GREEK_HELP
 from spricer.bricks import BarrierOption, DigitalOption, OneTouch, ZeroCoupon
 from spricer.conventions import Greeks, to_desk
 from spricer.market import Market, OverriddenVol
+from spricer.mc import NoteMonteCarlo
 from spricer.monitoring import Monitoring
 from spricer.products.notes import NOTIONAL, LevelKind, Note, NoteLeg
 
@@ -172,3 +173,33 @@ def bond_value(note: Note, market: Market, credit_spread: float) -> float:
         for leg, value in zip(note.legs, note.leg_values(market, credit_spread), strict=True)
         if isinstance(leg.brick, ZeroCoupon)
     )
+
+
+MC_GAP_COLUMN = "Gap (std errors)"
+
+
+def monte_carlo_table(
+    note: Note, market: Market, credit_spread: float, mc: NoteMonteCarlo
+) -> pd.DataFrame:
+    """Closed form against Monte Carlo, leg by leg then in total, in % of notional."""
+    rows = []
+    pairs = [
+        (leg.role, closed, est)
+        for leg, closed, est in zip(
+            note.legs, note.leg_values(market, credit_spread), mc.legs, strict=True
+        )
+    ]
+    pairs.append(("Total", float(note.value(market, credit_spread)), mc.total))
+    for name, closed, est in pairs:
+        # a leg without randomness (the zero-coupon) has no error to measure the gap in
+        gap = (est.value - closed) / est.std_error if est.std_error > 1e-9 else math.nan
+        rows.append(
+            {
+                "Leg": name,
+                "Closed form (%)": closed,
+                "Monte Carlo (%)": est.value,
+                "± 1 std error (%)": est.std_error,
+                MC_GAP_COLUMN: gap,
+            }
+        )
+    return pd.DataFrame(rows)

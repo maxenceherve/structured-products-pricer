@@ -3,8 +3,11 @@
 Nothing here is market data. The volatility grid is sampled from an SSVI surface (Gatheral and
 Jacquier 2014, power-law parameterisation with ``eta (1 + |rho|) <= 2`` and ``gamma = 1/2``, a
 choice free of static arbitrage) with an upward-sloping at-the-money term structure, then
-rounded to 0.1 volatility point, the way a user would type it. A test checks that the
-interpolated grid is still free of butterfly and calendar arbitrage after rounding.
+rounded to 0.01 volatility point, the precision of a market data screen. A test checks that the
+interpolated grid is still free of butterfly and calendar arbitrage after rounding. A coarser
+rounding (0.1 point) is enough for the analytic bricks, but the local volatility of the Monte
+Carlo engine differentiates the smile twice: on closely spaced long-dated strikes, rounding
+noise of 0.05 point turns into spikes of several volatility points.
 """
 
 from __future__ import annotations
@@ -62,7 +65,7 @@ def ssvi_vol(strike_pct: float, maturity: float) -> float:
 
 
 DEFAULT_VOLS: tuple[tuple[float, ...], ...] = tuple(
-    tuple(round(ssvi_vol(m, t), 3) for m in DEFAULT_STRIKES_PCT) for t in DEFAULT_MATURITIES
+    tuple(round(ssvi_vol(m, t), 4) for m in DEFAULT_STRIKES_PCT) for t in DEFAULT_MATURITIES
 )
 
 

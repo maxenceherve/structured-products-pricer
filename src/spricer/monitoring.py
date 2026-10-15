@@ -27,3 +27,10 @@ def require_european(monitoring: Monitoring, product: str) -> None:
             f"{monitoring.value} barrier observation is not available for the {product} yet; "
             "only European (at maturity) barriers are priced for it."
         )
+
+
+def observation_dates(maturity: float, observations: int) -> list[float]:
+    """Equally spaced discrete observation dates ``maturity * i / observations``, i = 1..n."""
+    if observations < 1:
+        raise ValueError("discrete monitoring needs at least one observation date")
+    return [maturity * i / observations for i in range(1, observations + 1)]

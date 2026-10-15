@@ -48,7 +48,7 @@ def default_grid() -> pd.DataFrame:
     """Default volatility grid, in volatility points: one row per maturity."""
     data: dict[str, list[float]] = {MATURITY_COLUMN: list(DEFAULT_MATURITIES)}
     for j, strike in enumerate(DEFAULT_STRIKES_PCT):
-        data[strike_column(strike)] = [round(100.0 * row[j], 1) for row in DEFAULT_VOLS]
+        data[strike_column(strike)] = [round(100.0 * row[j], 2) for row in DEFAULT_VOLS]
     return pd.DataFrame(data)
 
 
@@ -162,8 +162,17 @@ def persistent(
 
 
 def choice(
-    widget: Callable[..., Any], label: str, key: str, options: Sequence[V], **kwargs: Any
+    widget: Callable[..., Any],
+    label: str,
+    key: str,
+    options: Sequence[V],
+    default: V | None = None,
+    **kwargs: Any,
 ) -> V:
-    """:func:`persistent` for a selectbox or radio: always returns one of ``options``."""
-    value = persistent(widget, label, key, options[0], options=options, **kwargs)
+    """:func:`persistent` for a selectbox or radio: always returns one of ``options``.
+
+    The first option is selected until the user picks another, unless ``default`` is given.
+    """
+    first = options[0] if default is None else default
+    value = persistent(widget, label, key, first, options=options, **kwargs)
     return options[list(options).index(value)]

@@ -178,3 +178,41 @@ def test_shark_barrier_observation_can_be_chosen(app, choice):
     spec = next(s for s in NOTE_CATALOG if s.name == "Shark note (up)")
     note = spec.build({}, 3.0, 100.0, mode, 756 if mode is Monitoring.DISCRETE else None)
     assert app.metric[0].value == f"{float(note.value(default_market())):.2f} %"
+
+
+def run_monte_carlo_check(at):
+    at.button(key="cp_price_button").click().run()
+    at.radio(key="widget_cp_mc_paths").set_value("50,000").run()
+    at.button(key="cp_mc_button").click().run()
+    assert not at.exception
+    return at
+
+
+def test_monte_carlo_check_agrees_with_a_european_note(app):
+    open_capital_protection(app)
+    run_monte_carlo_check(app)
+    labels = [m.label for m in app.metric]
+    assert "Monte Carlo" in labels
+    assert "95 % interval" in labels
+    gap = next(m for m in app.metric if m.label == "MC − closed form")
+    assert abs(float(str(gap.delta).split()[0])) < 4.0  # in standard errors
+    assert any("Monte Carlo noise" in c.value for c in app.caption)
+
+
+def test_monte_carlo_check_explains_the_smile_effect_on_a_path_barrier(app):
+    open_capital_protection(app)
+    app.pills(key="widget_cp_product").set_value("Shark note (up)").run()
+    app.radio(key="widget_cp_monitoring").set_value("Continuously").run()
+    run_monte_carlo_check(app)
+    assert any("local volatility of the whole smile" in i.value for i in app.info)
+
+
+def test_typed_volatilities_are_flagged_in_the_monte_carlo_check(app):
+    open_capital_protection(app)
+    app.button(key="cp_price_button").click().run()
+    editor = app.session_state["cp_vols"].copy()
+    editor.loc[0, "Volatility (%)"] = 30.0
+    app.session_state["cp_vols"] = editor
+    app.session_state["cp_vols_base"] = editor
+    run_monte_carlo_check(app)
+    assert any("apply to the price at the top only" in c.value for c in app.caption)

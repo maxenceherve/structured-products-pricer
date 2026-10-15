@@ -12,11 +12,16 @@ import note_presentation as npres
 import presentation as pres
 import state
 from spricer.analytic.barrier import bgk_warning
+from spricer.market import OverriddenVol
+from spricer.mc import price_note
+from spricer.mc.paths import Z_95
 from spricer.monitoring import Monitoring
 from spricer.products.capital_protection import NOTE_CATALOG, NoteSpec
 from spricer.products.notes import Note
 
 PRICED = "cp_priced_signature"
+MC_RESULT = "cp_mc_result"
+MC_PATHS = {"50,000": 50_000, "100,000": 100_000, "200,000": 200_000}
 VOLS_EDITOR, VOLS_BASE, VOLS_SOURCE, VOLS = (
     "cp_vols_editor",
     "cp_vols_base",
@@ -199,6 +204,7 @@ with st.container(border=True):
 
 try:
     market = state.current_market()
+    smile_market = market  # before any volatility typed on this page
 except ValueError as exc:
     with vols_box:
         st.error(f"The volatility surface is invalid: {exc}")
@@ -304,6 +310,73 @@ with st.container(border=True):
             f"Black-Scholes digitals the note would be worth {price - skew:.2f} % instead of "
             f"{price:.2f} %."
         )
+
+with st.container(border=True):
+    st.subheader("Monte Carlo check")
+    st.caption(
+        "Simulates the underlying under the local volatility of the whole smile (Dupire) and "
+        "prices every brick on the same paths."
+    )
+    left, right = st.columns([1.4, 1], vertical_alignment="bottom")
+    with left:
+        paths_label = state.choice(
+            st.radio, "Paths", "cp_mc_paths", list(MC_PATHS), "100,000", horizontal=True
+        )
+    mc_key = (fingerprint, paths_label)
+    with right:
+        run_mc = st.button("Check with Monte Carlo", icon=":material/casino:", key="cp_mc_button")
+    if run_mc:
+        with st.spinner("Simulating paths..."):
+            try:
+                result = price_note(note, smile_market, spread, n_paths=MC_PATHS[paths_label])
+            except ValueError as exc:
+                st.error(str(exc))
+                st.stop()
+        st.session_state[MC_RESULT] = (mc_key, result)
+    stored = st.session_state.get(MC_RESULT)
+    if stored is not None and stored[0] == mc_key:
+        mc = stored[1]
+        closed = float(note.value(smile_market, spread))
+        gap = (mc.total.value - closed) / mc.total.std_error
+        c = st.columns(3)
+        c[0].metric("Monte Carlo", f"{mc.total.value:.2f} %")
+        c[1].metric(
+            "95 % interval",
+            f"± {Z_95 * mc.total.std_error:.2f} %",
+            help=f"1.96 standard errors; one standard error is {mc.total.std_error:.3f} %.",
+        )
+        c[2].metric(
+            "MC − closed form",
+            f"{mc.total.value - closed:+.2f} %",
+            f"{gap:+.1f} std errors",
+            delta_color="off",
+        )
+        mc_table = npres.monte_carlo_table(note, smile_market, spread, mc)
+        mc_formats = {
+            "Closed form (%)": "{:.3f}",
+            "Monte Carlo (%)": "{:.3f}",
+            "± 1 std error (%)": "{:.3f}",
+            npres.MC_GAP_COLUMN: "{:+.1f}",
+        }
+        st.table(pres.style_decomposition(mc_table, mc_formats))
+        if note.monitoring in (None, Monitoring.EUROPEAN):
+            st.caption(
+                "Both prices come from the same smile: the gap is Monte Carlo noise and stays "
+                "within ±2 standard errors 95 % of the time."
+            )
+        else:
+            st.info(
+                "The closed form reads one volatility, the strike's, for the whole path; the "
+                "Monte Carlo diffuses on the local volatility of the whole smile. With a "
+                "barrier observed along the path the gap is the smile's effect on the barrier, "
+                "not noise."
+            )
+        overridden = isinstance(market.vol, OverriddenVol) and market.vol.overrides
+        if overridden:
+            st.caption(
+                "Volatilities typed above apply to the price at the top only: this check "
+                "compares both methods on the smile of the volatility surface."
+            )
 
 with st.expander("How is this priced?"):
     st.markdown(

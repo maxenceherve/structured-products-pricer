@@ -298,6 +298,9 @@ FAMILY_BLURB = {
 }
 
 
+PRICE_COLUMNS = ("Price (%)", "Closed form (%)", "Monte Carlo (%)")
+
+
 def _sign_color(value: object) -> str:
     if not isinstance(value, int | float) or not math.isfinite(value) or abs(value) < 5e-5:
         return ""
@@ -321,7 +324,7 @@ def _total_row_style(row: pd.Series) -> list[str]:
 def style_decomposition(table: pd.DataFrame, formats: dict[str, str]) -> Styler:
     """Table styler: positives green, negatives red, long/short coloured, total highlighted."""
     numeric = pd.Index(
-        [c for c in table.columns if c in ("Price (%)", "of which skew (%)", *GREEK_HELP)]
+        [c for c in table.columns if c in (*PRICE_COLUMNS, "of which skew (%)", *GREEK_HELP)]
     )
     styler = table.style.format(formats, na_rep="").hide(axis="index")  # type: ignore[arg-type]
     return (

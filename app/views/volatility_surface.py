@@ -100,7 +100,7 @@ st.session_state[state.GRID] = st.data_editor(
     column_config={
         state.MATURITY_COLUMN: st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
         **{
-            state.strike_column(k): st.column_config.NumberColumn(min_value=0.0, format="%.1f")
+            state.strike_column(k): st.column_config.NumberColumn(min_value=0.0, format="%.2f")
             for k in state.grid_strikes(st.session_state[GRID_BASE])
         },
     },
