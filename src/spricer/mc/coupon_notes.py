@@ -98,10 +98,20 @@ def _breached(note: CouponNote, basket: Basket, paths: PathSet, final: FloatArra
     return np.asarray(basket.worst_pct(lows) < note.protection_barrier)
 
 
-def evaluate_note(
-    note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float = 0.0
-) -> CouponNoteMonteCarlo:
-    """Value ``note`` on paths simulated by :func:`simulate_note`."""
+@dataclass(frozen=True)
+class _CashFlows:
+    """Discounted cash flows of a note on every row of a path set."""
+
+    legs: tuple[FloatArray, FloatArray, FloatArray, FloatArray]
+    called: tuple[FloatArray, ...]
+    life: FloatArray
+    losing: FloatArray
+    breached_alive: FloatArray
+
+
+def _cash_flows(
+    note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float
+) -> _CashFlows:
     if paths.monitoring is not note.monitoring:
         raise ValueError("the paths do not observe the barrier the way the note does")
     rows = paths.spots.shape[0]
@@ -111,7 +121,7 @@ def evaluate_note(
     coupons = np.zeros(rows)
     called_cash = np.zeros(rows)
     life = np.full(rows, note.maturity)
-    calls: list[MCEstimate] = []
+    calls: list[FloatArray] = []
     last = len(note.observations) - 1
     for j, obs in enumerate(note.observations):
         df = np.exp(-rate * obs.time)
@@ -127,7 +137,7 @@ def evaluate_note(
             called_cash += np.where(called, NOTIONAL * df, 0.0)
             life = np.where(called, obs.time, life)
             alive &= ~called
-        calls.append(paths.estimate(called.astype(np.float64)))
+        calls.append(called.astype(np.float64))
 
     final = basket.worst_pct(paths.spots[:, paths.index(note.maturity), :])
     breached = _breached(note, basket, paths, final)
@@ -135,14 +145,34 @@ def evaluate_note(
     losing = alive & breached & (final < note.put_strike)
     loss = np.where(losing, NOTIONAL * (note.put_strike - final) / note.put_strike, 0.0) * df_t
     redemption = np.where(alive, NOTIONAL * df_t, 0.0)
-    legs = (coupons, called_cash, redemption, -loss)
+    return _CashFlows(
+        legs=(coupons, called_cash, redemption, -loss),
+        called=tuple(calls),
+        life=life,
+        losing=losing.astype(np.float64),
+        breached_alive=(alive & breached).astype(np.float64),
+    )
+
+
+def note_samples(
+    note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float = 0.0
+) -> FloatArray:
+    """Discounted value of ``note`` on every row of ``paths`` (feed to ``paths.estimate``)."""
+    return np.asarray(np.sum(_cash_flows(note, basket, paths, credit_spread).legs, axis=0))
+
+
+def evaluate_note(
+    note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float = 0.0
+) -> CouponNoteMonteCarlo:
+    """Value ``note`` on paths simulated by :func:`simulate_note`."""
+    flows = _cash_flows(note, basket, paths, credit_spread)
     return CouponNoteMonteCarlo(
-        total=paths.estimate(np.sum(legs, axis=0)),
-        legs=tuple(paths.estimate(leg) for leg in legs),
-        call_probability=tuple(calls),
-        expected_life=paths.estimate(life),
-        loss_probability=paths.estimate(losing.astype(np.float64)),
-        breach_probability=paths.estimate((alive & breached).astype(np.float64)),
+        total=paths.estimate(np.sum(flows.legs, axis=0)),
+        legs=tuple(paths.estimate(leg) for leg in flows.legs),
+        call_probability=tuple(paths.estimate(c) for c in flows.called),
+        expected_life=paths.estimate(flows.life),
+        loss_probability=paths.estimate(flows.losing),
+        breach_probability=paths.estimate(flows.breached_alive),
     )
 
 

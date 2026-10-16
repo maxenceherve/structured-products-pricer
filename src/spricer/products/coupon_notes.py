@@ -129,6 +129,20 @@ class CouponNote:
         if self.memory_accrued > 0.0 and not self.memory:
             raise ValueError("coupons in memory need a note with memory")
 
+    def aged(self, years: float) -> CouponNote:
+        """The same note ``years`` later: every date comes closer (for theta).
+
+        Raises
+        ------
+        ValueError
+            If an observation would fall today or in the past within that time.
+        """
+        if self.observations[0].time <= years + _TIME_TOL:
+            raise ValueError("an observation date falls within this period")
+        return replace(
+            self, observations=tuple(replace(o, time=o.time - years) for o in self.observations)
+        )
+
     @property
     def maturity(self) -> float:
         """Years to maturity."""

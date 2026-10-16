@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import dataclasses
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -67,6 +68,16 @@ class Basket:
         """Basket from sequences."""
         corr = None if correlation is None else np.asarray(correlation, dtype=np.float64)
         return cls(tuple(markets), tuple(initials), tuple(names), corr)
+
+    def with_market(self, index: int, market: Market) -> Basket:
+        """Same basket with the market of underlying ``index`` replaced (for a bump)."""
+        markets = list(self.markets)
+        markets[index] = market
+        return dataclasses.replace(self, markets=tuple(markets))
+
+    def map_markets(self, change: Callable[[Market], Market]) -> Basket:
+        """Same basket with every market changed (e.g. a rate bump)."""
+        return dataclasses.replace(self, markets=tuple(change(m) for m in self.markets))
 
     @property
     def size(self) -> int:

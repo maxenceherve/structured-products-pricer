@@ -13,11 +13,13 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import greeks_explain as gx
 import presentation as pres
 import state
 from spricer.market import Basket, Market
 from spricer.mc import check_correlation, nearest_correlation
 from spricer.mc.coupon_notes import LEG_NAMES, CouponNoteMonteCarlo, price_coupon_note
+from spricer.mc.greeks import DELTA_BUMP, GAMMA_BUMP, NoteGreeks, coupon_note_greeks
 from spricer.mc.paths import Z_95
 from spricer.monitoring import Monitoring
 from spricer.products.coupon_notes import (
@@ -395,6 +397,85 @@ def _closed_form_check(
         )
 
 
+def _greeks_table(greeks: NoteGreeks) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Underlying": a.name,
+                "Delta (%)": a.delta.value,
+                "± Delta": a.delta.std_error,
+                "Gamma (%)": a.gamma.value,
+                "± Gamma": a.gamma.std_error,
+                "Vega (%)": a.vega.value,
+                "± Vega": a.vega.std_error,
+            }
+            for a in greeks.assets
+        ]
+    )
+
+
+def _greeks(
+    family: str, note: CouponNote, basket: Basket, spread: float, n: int, fingerprint: str
+) -> None:
+    st.markdown("#### Greeks (Monte Carlo)")
+    key = _key(family, "greeks")
+    if st.button("Compute Greeks", icon=":material/functions:", key=_key(family, "greeks_button")):
+        with st.spinner("Bumping each underlying on common random numbers..."):
+            st.session_state[key] = (
+                fingerprint,
+                coupon_note_greeks(note, basket, spread, n_paths=n),
+            )
+    stored = st.session_state.get(key)
+    if stored is None or stored[0] != fingerprint:
+        st.caption(
+            "Delta, gamma and vega for each underlying, theta and rho, each with its Monte Carlo "
+            "standard error (about 10 revaluations per underlying)."
+        )
+        return
+    greeks: NoteGreeks = stored[1]
+    table = _greeks_table(greeks)
+    st.dataframe(
+        table,
+        hide_index=True,
+        column_config={
+            c: st.column_config.NumberColumn(format="%+.3f" if not c.startswith("±") else "%.3f")
+            for c in table.columns
+            if c != "Underlying"
+        },
+    )
+    cols = st.columns(2)
+    if greeks.theta is not None:
+        cols[0].metric(
+            "Theta (%)",
+            f"{greeks.theta.value:+.4f}",
+            f"± {greeks.theta.std_error:.4f}",
+            delta_color="off",
+            delta_arrow="off",
+            help="Change in value after one calendar day, the market unchanged.",
+        )
+    else:
+        cols[0].caption("Theta: an observation falls within the next day.")
+    cols[1].metric(
+        "Rho (%)",
+        f"{greeks.rho.value:+.4f}",
+        f"± {greeks.rho.std_error:.4f}",
+        delta_color="off",
+        delta_arrow="off",
+        help="Change in value for +1 basis point on the rate.",
+    )
+    for line in gx.note_reading(
+        [a.name for a in greeks.assets],
+        [a.delta.value for a in greeks.assets],
+        [a.vega.value for a in greeks.assets],
+    ):
+        st.markdown(f"- {line}")
+    st.caption(
+        f"Bump and revalue on common random numbers: spot ±{100 * DELTA_BUMP:.0f} % for delta "
+        f"and ±{100 * GAMMA_BUMP:.0f} % for gamma (structured payoffs jump at their barriers: "
+        "smaller bumps would be unbiased but far noisier), ±1 volatility point, ±1 bp, one day."
+    )
+
+
 def _solver(
     family: str,
     spec: CouponNoteSpec,
@@ -596,6 +677,7 @@ def render(family: str, title: str) -> None:
             "what pays for the coupon."
         )
         _closed_form_check(note, basket, spread, result)
+        _greeks(family, note, basket, spread, n_paths, fingerprint)
 
         payoff_tab, life_tab, schedule_tab = st.tabs(
             ["Payoff at maturity", "When does the note end?", "Observation schedule"]

@@ -397,3 +397,141 @@ def call_probability_figure(note: CouponNote, result: CouponNoteMonteCarlo) -> g
         height=480,
     )
     return fig
+
+
+ZONE_COLORS = {"ITM": "rgba(26, 152, 80, 0.08)", "OTM": "rgba(215, 48, 39, 0.07)"}
+ATM_COLOR = "rgba(31, 78, 121, 0.14)"
+
+
+def greeks_grid_figure(
+    spots_pct: FloatArray,
+    profile: dict[str, FloatArray],
+    names: tuple[str, ...],
+    *,
+    strikes_pct: tuple[float, ...],
+    atm_bands: tuple[tuple[float, float], ...],
+    itm_side: str | None,
+    title: str,
+) -> go.Figure:
+    """Small multiples: each Greek against the spot, with the money zones and today's spot.
+
+    ``atm_bands`` are the spot ranges where an option counts as at the money; ``itm_side``
+    ("above" or "below" the strike) shades the in- and out-of-the-money sides for a single
+    option, None for several strikes.
+    """
+    from plotly.subplots import make_subplots
+
+    cols = 2
+    rows = int(np.ceil(len(names) / cols))
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=names, horizontal_spacing=0.08)
+    lo, hi = float(spots_pct[0]), float(spots_pct[-1])
+    for i, name in enumerate(names):
+        r, c = i // cols + 1, i % cols + 1
+        if itm_side is not None and strikes_pct:
+            k = strikes_pct[0]
+            above, below = ("ITM", "OTM") if itm_side == "above" else ("OTM", "ITM")
+            fig.add_vrect(
+                x0=k,
+                x1=hi,
+                fillcolor=ZONE_COLORS[above],
+                line_width=0,
+                row=r,
+                col=c,
+                exclude_empty_subplots=False,
+            )
+            fig.add_vrect(
+                x0=lo,
+                x1=k,
+                fillcolor=ZONE_COLORS[below],
+                line_width=0,
+                row=r,
+                col=c,
+                exclude_empty_subplots=False,
+            )
+        for x0, x1 in atm_bands:
+            fig.add_vrect(
+                x0=x0,
+                x1=x1,
+                fillcolor=ATM_COLOR,
+                line_width=0,
+                row=r,
+                col=c,
+                exclude_empty_subplots=False,
+            )
+        for k in strikes_pct:
+            fig.add_vline(
+                x=k,
+                line={"dash": "dash", "color": "#7f7f7f", "width": 1},
+                row=r,
+                col=c,
+                exclude_empty_subplots=False,
+            )
+        fig.add_vline(
+            x=100.0,
+            line={"dash": "dot", "color": "black", "width": 1},
+            row=r,
+            col=c,
+            exclude_empty_subplots=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=spots_pct,
+                y=profile[name],
+                name=name,
+                mode="lines",
+                line={"color": TOTAL_COLOR, "width": 2.5},
+                showlegend=False,
+            ),
+            row=r,
+            col=c,
+        )
+        idx = int(np.argmin(np.abs(spots_pct - 100.0)))
+        fig.add_trace(
+            go.Scatter(
+                x=[100.0],
+                y=[float(profile[name][idx])],
+                mode="markers",
+                marker={"color": SHORT_COLORS[0], "size": 9},
+                showlegend=False,
+                hovertemplate="today: %{y:.4f}<extra></extra>",
+            ),
+            row=r,
+            col=c,
+        )
+    fig.update_xaxes(title_text="Spot (% of today)", title_font={"size": 11})
+    fig.update_layout(
+        title=title,
+        height=300 * rows + 80,
+        margin={"t": 80, "r": 10, "l": 10},
+        hovermode="x unified",
+    )
+    return fig
+
+
+def greek_time_figure(
+    maturities: FloatArray, curves: dict[str, FloatArray], greek: str
+) -> go.Figure:
+    """One Greek against the remaining maturity, for a few spots (ITM, ATM, OTM)."""
+    colors = {"In the money": LONG_COLORS[0], "At the money": TOTAL_COLOR}
+    fig = go.Figure()
+    for label, values in curves.items():
+        fig.add_trace(
+            go.Scatter(
+                x=maturities,
+                y=values,
+                name=label,
+                mode="lines",
+                line={"color": colors.get(label.split(" (")[0], SHORT_COLORS[0]), "width": 2.5},
+            )
+        )
+    fig.update_layout(
+        title=f"{greek} as expiry approaches",
+        xaxis_title="Time to maturity (years)",
+        yaxis_title=greek,
+        xaxis_autorange="reversed",
+        legend={"orientation": "h", "y": -0.25},
+        hovermode="x unified",
+        height=460,
+        margin={"t": 60, "r": 10},
+    )
+    return fig
