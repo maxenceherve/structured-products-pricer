@@ -129,7 +129,6 @@ def leg_description(note: Note, leg: NoteLeg, market: Market) -> str:
 
 def decomposition_table(note: Note, market: Market, credit_spread: float) -> pd.DataFrame:
     """Bond part, then every brick, then the total; everything in % of notional."""
-    df = note.discount_spread(credit_spread)
     values = note.leg_values(market, credit_spread)
     rows = []
     for leg, value, g in zip(
@@ -137,7 +136,9 @@ def decomposition_table(note: Note, market: Market, credit_spread: float) -> pd.
     ):
         brick = leg.brick
         skew = (
-            leg.quantity * float(brick.skew_adjustment(market)) * df
+            leg.quantity
+            * float(brick.skew_adjustment(market))
+            * note.discount_spread(credit_spread, brick.maturity)
             if isinstance(brick, DigitalOption | BarrierOption | OneTouch)
             else 0.0
         )

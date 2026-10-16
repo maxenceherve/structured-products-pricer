@@ -18,9 +18,12 @@ from spricer.mc.paths import Z_95
 from spricer.monitoring import Monitoring
 from spricer.products.capital_protection import NOTE_CATALOG, NoteSpec
 from spricer.products.notes import Note
+from spricer.solve import solve_note
 
 PRICED = "cp_priced_signature"
 MC_RESULT = "cp_mc_result"
+SOLUTION = "cp_solution"
+SOLVE_BOUNDS = (0.0, 400.0)  # every term is a level or an amount in %
 MC_PATHS = {"50,000": 50_000, "100,000": 100_000, "200,000": 200_000}
 VOLS_EDITOR, VOLS_BASE, VOLS_SOURCE, VOLS = (
     "cp_vols_editor",
@@ -82,7 +85,7 @@ def _terms(spec: NoteSpec) -> dict[str, float]:
     return values
 
 
-def _product() -> tuple[Note | None, str]:
+def _product() -> tuple[Note | None, str, dict[str, Any]]:
     """Draw the product section; return the note (None if invalid) and its fingerprint."""
     name = state.choice(st.pills, "Product", "cp_product", NAMES, required=True)
     spec = next(s for s in NOTE_CATALOG if s.name == name)
@@ -150,18 +153,30 @@ def _product() -> tuple[Note | None, str]:
     fingerprint = pres.signature(
         name, maturity, initial, sorted(values.items()), monitoring.value, observations
     )
+    context: dict[str, Any] = {
+        "spec": spec,
+        "values": values,
+        "maturity": maturity,
+        "initial": initial,
+        "monitoring": monitoring,
+        "observations": observations,
+    }
     try:
-        return spec.build(values, maturity, initial, monitoring, observations), fingerprint
+        return (
+            spec.build(values, maturity, initial, monitoring, observations),
+            fingerprint,
+            context,
+        )
     except ValueError as exc:
         st.error(str(exc))
-        return None, fingerprint
+        return None, fingerprint, context
 
 
 st.title("Capital protection")
 
 with st.container(border=True):
     st.subheader("1 · Product")
-    note, product_fingerprint = _product()
+    note, product_fingerprint, product_context = _product()
 
 with st.container(border=True):
     st.subheader("2 · Market data")
@@ -350,6 +365,7 @@ with st.container(border=True):
             f"{mc.total.value - closed:+.2f} %",
             f"{gap:+.1f} std errors",
             delta_color="off",
+            delta_arrow="off",
         )
         mc_table = npres.monte_carlo_table(note, smile_market, spread, mc)
         mc_formats = {
@@ -377,6 +393,58 @@ with st.container(border=True):
                 "Volatilities typed above apply to the price at the top only: this check "
                 "compares both methods on the smile of the volatility surface."
             )
+
+with st.container(border=True):
+    st.subheader("Solve for")
+    st.caption(
+        "Fix every term but one and find the value that prices the note at your target: for "
+        "instance the participation that an issue price of 100 % minus a 2 % margin can pay."
+    )
+    spec: NoteSpec = product_context["spec"]
+    terms = [p for p in spec.params if p.kind != "toggle" and p.key in product_context["values"]]
+    s_cols = st.columns([2, 1, 1], vertical_alignment="bottom")
+    with s_cols[0]:
+        term_label = state.choice(
+            st.selectbox, "Term to solve", "cp_solve_term", [p.label for p in terms]
+        )
+    term = next(p for p in terms if p.label == term_label)
+    with s_cols[1]:
+        target = state.persistent(
+            st.number_input,
+            "Target price (%)",
+            "cp_solve_target",
+            98.0,
+            step=0.25,
+            format="%.2f",
+        )
+    with s_cols[2]:
+        solve_clicked = st.button("Solve", icon=":material/target:", key="cp_solve_button")
+    solve_fingerprint = pres.signature(fingerprint, term.key, target)
+    if solve_clicked:
+
+        def build(x: float) -> Note:
+            return spec.build(
+                {**product_context["values"], term.key: x},
+                product_context["maturity"],
+                product_context["initial"],
+                product_context["monitoring"],
+                product_context["observations"],
+            )
+
+        try:
+            solution = solve_note(build, market, target, SOLVE_BOUNDS, spread, term.label.lower())
+            st.session_state[SOLUTION] = (solve_fingerprint, solution)
+        except ValueError as exc:
+            st.error(str(exc))
+    solved = st.session_state.get(SOLUTION)
+    if solved is not None and solved[0] == solve_fingerprint:
+        st.success(
+            f"**{term.label} = {solved[1].value:.2f} %** prices the note at "
+            f"{solved[1].price:.2f} % (closed form, exact)."
+        )
+        if st.button("Use this value", key="cp_solve_apply"):
+            st.session_state[f"cp_{spec.name}_{term.key}"] = round(solved[1].value, 2)
+            st.rerun()
 
 with st.expander("How is this priced?"):
     st.markdown(

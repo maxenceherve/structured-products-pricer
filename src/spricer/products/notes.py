@@ -8,8 +8,8 @@ volatility smile is always read at the true moneyness, whatever the current spot
 
 The note is a liability of its issuer: every cash flow, the bond part and the options alike,
 is discounted at the risk-free rate plus the issuer's credit spread, while the underlying keeps
-its risk-free drift. With a spread ``s`` the value is ``e^{-sT}`` times the risk-free value of
-the replicating bricks.
+its risk-free drift. With a spread ``s`` each leg is worth ``e^{-s T_leg}`` times the risk-free
+value of its brick, ``T_leg`` being the brick's maturity.
 
 Every note also carries its payoff as a direct formula of the final performance. The tests
 check that the bricks replicate it exactly, independently of any pricing model.
@@ -95,30 +95,43 @@ class Note:
         if not (np.isfinite(self.initial) and self.initial > 0.0):
             raise ValueError("the initial level must be positive")
 
-    def discount_spread(self, credit_spread: float) -> float:
-        """Extra discount factor ``e^{-sT}`` for the issuer's credit spread."""
-        return float(np.exp(-credit_spread * self.maturity))
+    def discount_spread(self, credit_spread: float, maturity: float | None = None) -> float:
+        """Extra discount factor ``e^{-sT}`` for the issuer's credit spread.
+
+        ``maturity`` defaults to the note's; a leg paid earlier is discounted to its own date.
+        """
+        t = self.maturity if maturity is None else maturity
+        return float(np.exp(-credit_spread * t))
 
     def value(
         self, market: Market, credit_spread: float = 0.0, spot: ArrayLike | None = None
     ) -> FloatArray:
         """Value in % of notional."""
-        risk_free = sum(
-            (leg.quantity * leg.brick.value(market, spot) for leg in self.legs),
+        total = sum(
+            (
+                leg.quantity
+                * leg.brick.value(market, spot)
+                * self.discount_spread(credit_spread, leg.brick.maturity)
+                for leg in self.legs
+            ),
             start=np.zeros(()),
         )
-        return np.asarray(risk_free * self.discount_spread(credit_spread), dtype=np.float64)
+        return np.asarray(total, dtype=np.float64)
 
     def leg_values(self, market: Market, credit_spread: float = 0.0) -> list[float]:
         """Value of each leg in % of notional (they add up to :meth:`value`)."""
-        df = self.discount_spread(credit_spread)
-        return [leg.quantity * float(leg.brick.value(market)) * df for leg in self.legs]
+        return [
+            leg.quantity
+            * float(leg.brick.value(market))
+            * self.discount_spread(credit_spread, leg.brick.maturity)
+            for leg in self.legs
+        ]
 
     def leg_greeks(self, market: Market, credit_spread: float = 0.0) -> list[Greeks]:
         """Raw Greeks of each leg, in % of notional per unit of the underlying."""
-        df = self.discount_spread(credit_spread)
         out = []
         for leg in self.legs:
+            df = self.discount_spread(credit_spread, leg.brick.maturity)
             g = leg.brick.greeks(market) * leg.quantity
             v = leg.quantity * leg.brick.value(market)
             # theta = -d/dT [e^{-sT} V] = e^{-sT} (theta_V + s V)

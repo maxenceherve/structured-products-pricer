@@ -1,5 +1,6 @@
 """Market environment: spot, rates, dividends and implied volatility."""
 
+from spricer.market.basket import Basket
 from spricer.market.core import Market
 from spricer.market.vol_surface import (
     ArbitrageReport,
@@ -12,6 +13,7 @@ from spricer.market.vol_surface import (
 
 __all__ = [
     "ArbitrageReport",
+    "Basket",
     "FlatVol",
     "InterpolatedVolSurface",
     "Market",

@@ -10,6 +10,9 @@ import presentation
 from spricer._typing import FloatArray
 from spricer.bricks import Underlying
 from spricer.market import InterpolatedVolSurface, Market
+from spricer.mc.coupon_notes import CouponNoteMonteCarlo
+from spricer.monitoring import Monitoring
+from spricer.products.coupon_notes import CouponNote
 from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
 
@@ -278,5 +281,119 @@ def note_payoff_figure(note: Note, market: Market) -> go.Figure:
         margin={"t": 60, "r": 10},
         hovermode="x unified",
         height=540,
+    )
+    return fig
+
+
+def coupon_payoff_figure(note: CouponNote, today_pct: float) -> go.Figure:
+    """Payoff at maturity of a coupon note never called, against the worst performance.
+
+    With a barrier observed along the path the capital is at risk below the strike only if the
+    barrier was breached: the chart then shows both cases.
+    """
+    levels = [lv.value_pct for lv in note.levels]
+    top = max(160.0, 1.25 * max([today_pct, *levels]))
+    perf = np.linspace(0.0, top, 1601)
+    y_top = 1.1 * max(top, float(np.max(note.maturity_payoff(perf, False))))
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=perf,
+            name="Delta one",
+            mode="lines",
+            line={"color": DELTA_ONE_COLOR, "dash": "dot", "width": 1.5},
+        )
+    )
+    for i, level in enumerate(note.levels):
+        fig.add_trace(
+            go.Scatter(
+                x=[level.value_pct] * 2,
+                y=[0.0, y_top],
+                name=f"{level.name} {level.value_pct:g}%",
+                mode="lines",
+                hoverinfo="skip",
+                line={
+                    "color": PERFORMANCE_LEVEL_COLORS[i % len(PERFORMANCE_LEVEL_COLORS)],
+                    "dash": "dash",
+                    "width": 1.5,
+                },
+            )
+        )
+    path_barrier = note.monitoring is not Monitoring.EUROPEAN and not note.barrier_breached
+    if path_barrier:
+        fig.add_trace(
+            go.Scatter(
+                x=perf,
+                y=note.maturity_payoff(perf, True),
+                name="Barrier breached during the life",
+                mode="lines",
+                line={"color": SHORT_COLORS[0], "width": 3, "dash": "dash"},
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=note.maturity_payoff(perf, False),
+            name="Barrier never breached" if path_barrier else "Payoff",
+            mode="lines",
+            line={"color": TOTAL_COLOR, "width": 4},
+        )
+    )
+    fig.add_vline(
+        x=today_pct,
+        line={"dash": "dot", "color": "black", "width": 1},
+        annotation_text=f"today {today_pct:.1f}%",
+        annotation_position="top",
+    )
+    fig.update_layout(
+        title="If never called: paid at maturity",
+        xaxis_title="Worst performance at maturity (% of initial level)",
+        yaxis_title="Paid at maturity (% of notional)",
+        xaxis_range=[0.0, top],
+        yaxis_range=[0.0, y_top],
+        legend={"orientation": "h", "y": -0.2},
+        margin={"t": 60, "r": 10},
+        hovermode="x unified",
+        height=520,
+    )
+    return fig
+
+
+def call_probability_figure(note: CouponNote, result: CouponNoteMonteCarlo) -> go.Figure:
+    """Probability of a call at each date, and of reaching maturity, with the cumulative line."""
+    times = [o.time for o in note.observations]
+    calls = [100.0 * p.value for p in result.call_probability]
+    reach = 100.0 - sum(calls)
+    labels = [f"{t:.2f}y" for t in times]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(x=labels, y=calls, name="Called at this date", marker_color=LONG_COLORS[1])
+    )
+    fig.add_trace(
+        go.Bar(
+            x=[f"{note.maturity:.2f}y (maturity)"],
+            y=[reach],
+            name="Reaches maturity",
+            marker_color=SHORT_COLORS[1],
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=labels,
+            y=np.cumsum(calls),
+            name="Called by this date",
+            mode="lines+markers",
+            line={"color": TOTAL_COLOR, "width": 2},
+        )
+    )
+    fig.update_layout(
+        title="Probability of a call at each date",
+        xaxis_title="Observation date (years from today)",
+        yaxis_title="Probability (%)",
+        yaxis_range=[0.0, 100.0],
+        legend={"orientation": "h", "y": -0.25},
+        margin={"t": 60, "r": 10},
+        height=480,
     )
     return fig

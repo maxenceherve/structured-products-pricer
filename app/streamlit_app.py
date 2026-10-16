@@ -29,6 +29,16 @@ page = st.navigation(
                 title="Capital protection",
                 icon=":material/shield:",
             ),
+            st.Page(
+                "views/yield_enhancement.py",
+                title="Yield enhancement",
+                icon=":material/savings:",
+            ),
+            st.Page(
+                "views/autocallables.py",
+                title="Autocallables",
+                icon=":material/autorenew:",
+            ),
         ],
         "Market data": [
             st.Page(
@@ -42,7 +52,7 @@ page = st.navigation(
 
 with st.sidebar:
     st.markdown("**Coming next**")
-    st.markdown(":gray[Yield enhancement]  \n:gray[Autocallables]  \n:gray[Participation]")
+    st.markdown(":gray[Greeks lab]  \n:gray[Hedging]  \n:gray[Product finder]")
     st.divider()
     st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
 
