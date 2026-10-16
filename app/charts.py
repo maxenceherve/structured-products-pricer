@@ -20,6 +20,7 @@ TOTAL_COLOR = "#1f4e79"
 DELTA_ONE_COLOR = "#7f7f7f"
 LONG_COLORS = ("#1a9850", "#2c7fb8", "#00a087", "#7fbc41", "#41b6c4")
 SHORT_COLORS = ("#d73027", "#f46d43", "#c51b7d", "#8c510a", "#e08214")
+POSITIVE_HEAT, NEGATIVE_HEAT = "#1a9850", "#d73027"
 
 
 def leg_colors(strategy: Strategy) -> list[str]:
@@ -531,6 +532,131 @@ def greek_time_figure(
         xaxis_autorange="reversed",
         legend={"orientation": "h", "y": -0.25},
         hovermode="x unified",
+        height=460,
+        margin={"t": 60, "r": 10},
+    )
+    return fig
+
+
+def hedge_histogram_figure(pnl: FloatArray, expected: float) -> go.Figure:
+    """Distribution of the hedged P&L with its mean and the theoretical mean."""
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(x=pnl, nbinsx=60, name="Hedged P&L", marker_color=LONG_COLORS[1], opacity=0.8)
+    )
+    fig.add_vline(
+        x=float(np.mean(pnl)),
+        line={"color": TOTAL_COLOR, "width": 2},
+        annotation_text="mean",
+        annotation_position="top",
+    )
+    fig.add_vline(
+        x=expected,
+        line={"color": SHORT_COLORS[0], "width": 2, "dash": "dash"},
+        annotation_text="theory",
+        annotation_position="bottom",
+    )
+    fig.update_layout(
+        title="Hedged P&L at maturity across paths",
+        xaxis_title="P&L (% of notional)",
+        yaxis_title="Paths",
+        showlegend=False,
+        height=420,
+        margin={"t": 60, "r": 10},
+    )
+    return fig
+
+
+def hedge_path_figure(
+    times: FloatArray,
+    spot: FloatArray,
+    delta: FloatArray,
+    gamma_pnl: FloatArray,
+    theta_pnl: FloatArray,
+) -> go.Figure:
+    """One hedged path: spot and delta, then the cumulative gamma and theta P&L."""
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        specs=[[{"secondary_y": True}], [{}]],
+        subplot_titles=("Spot and delta of the option", "Cumulative P&L of the hedged position"),
+        vertical_spacing=0.12,
+    )
+    fig.add_trace(
+        go.Scatter(x=times, y=spot, name="Spot", line={"color": TOTAL_COLOR}), row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=times[: len(delta)],
+            y=delta,
+            name="Delta (shares per option)",
+            line={"color": LONG_COLORS[0], "dash": "dot"},
+        ),
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+    steps = times[1 : len(gamma_pnl) + 1]
+    fig.add_trace(
+        go.Scatter(
+            x=steps, y=np.cumsum(gamma_pnl), name="Gamma: 1/2 Γ dS²", line={"color": LONG_COLORS[1]}
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=steps,
+            y=np.cumsum(theta_pnl),
+            name="Theta, carry and costs",
+            line={"color": SHORT_COLORS[0]},
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=steps,
+            y=np.cumsum(gamma_pnl + theta_pnl),
+            name="Total",
+            line={"color": "black", "width": 2.5},
+        ),
+        row=2,
+        col=1,
+    )
+    fig.update_xaxes(title_text="Years", row=2, col=1)
+    fig.update_layout(
+        height=620, legend={"orientation": "h", "y": -0.15}, margin={"t": 60, "r": 10}
+    )
+    return fig
+
+
+def scenario_heatmap_figure(
+    spot_moves: list[float], vol_moves: list[float], pnl: FloatArray, days: float
+) -> go.Figure:
+    """Full-revaluation P&L for each spot and volatility move."""
+    limit = float(np.max(np.abs(pnl))) or 1.0
+    fig = go.Figure(
+        go.Heatmap(
+            x=[f"{m:+g} %" for m in spot_moves],
+            y=[f"{v:+g} pts" for v in vol_moves],
+            z=pnl,
+            zmin=-limit,
+            zmax=limit,
+            colorscale=[[0.0, NEGATIVE_HEAT], [0.5, "#ffffff"], [1.0, POSITIVE_HEAT]],
+            text=np.round(pnl, 2),
+            texttemplate="%{text}",
+            colorbar={"title": "P&L %"},
+            hovertemplate="spot %{x}, vol %{y}: %{z:.3f} %<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=f"Full revaluation after {days:g} days",
+        xaxis_title="Spot move",
+        yaxis_title="Volatility move",
         height=460,
         margin={"t": 60, "r": 10},
     )

@@ -27,6 +27,11 @@ page = st.navigation(
                 title="Greeks lab",
                 icon=":material/science:",
             ),
+            st.Page(
+                "views/hedging.py",
+                title="Hedging",
+                icon=":material/balance:",
+            ),
         ],
         "Structured products": [
             st.Page(
@@ -57,7 +62,7 @@ page = st.navigation(
 
 with st.sidebar:
     st.markdown("**Coming next**")
-    st.markdown(":gray[Hedging]  \n:gray[Product finder]")
+    st.markdown(":gray[Product finder]")
     st.divider()
     st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
 

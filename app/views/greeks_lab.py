@@ -8,13 +8,11 @@ import streamlit as st
 import charts
 import greeks_explain as gx
 import state
-from spricer import strategies as strat
-from spricer.bricks import BARRIER_TYPES, BarrierOption
+from instruments import crossed_barrier_warning, draw_inputs
 from spricer.greeks_lab import (
     ATM_BAND,
     FIRST_ORDER,
     SECOND_ORDER,
-    Instrument,
     Moneyness,
     greeks_at,
     moneyness,
@@ -22,74 +20,9 @@ from spricer.greeks_lab import (
     spot_profile,
     time_profile,
 )
-from spricer.market import FlatVol, Market
-from spricer.monitoring import Monitoring
-from spricer.strategies import Family, Leg, Strategy
+from spricer.market import Market
 
-INSTRUMENTS = {
-    "Call": "vanilla",
-    "Put": "vanilla",
-    "Digital call": "digital",
-    "Digital put": "digital",
-    "Bull call spread": "spread",
-    "Straddle": "volatility",
-    "Call butterfly": "spread",
-    "Barrier option": "barrier",
-}
 SPOTS_PCT = np.linspace(50.0, 150.0, 201)
-DIGITAL_PAYOUT_PCT = 10.0  # % of the spot paid by a digital
-
-
-def _instrument(name: str, spot: float, values: dict[str, float | str]) -> Instrument:
-    """Strategy as a function of the maturity, for the inputs on screen."""
-    k = float(values["strike"]) / 100.0 * spot
-    w = float(values["width"]) / 100.0 * spot
-
-    def build(t: float) -> Strategy:
-        if name == "Call":
-            s = strat.call(k, t)
-        elif name == "Put":
-            s = strat.put(k, t)
-        elif name == "Digital call":
-            s = strat.digital_call(k, t, DIGITAL_PAYOUT_PCT / 100.0 * spot)
-        elif name == "Digital put":
-            s = strat.digital_put(k, t, DIGITAL_PAYOUT_PCT / 100.0 * spot)
-        elif name == "Bull call spread":
-            s = strat.bull_call_spread(k, k + w, t)
-        elif name == "Straddle":
-            s = strat.straddle(k, t)
-        elif name == "Call butterfly":
-            s = strat.call_butterfly(max(k - w, 1e-6), k, k + w, t)
-        else:
-            option = BarrierOption(
-                str(values["kind"]),  # type: ignore[arg-type]
-                str(values["barrier_type"]),  # type: ignore[arg-type]
-                k,
-                float(values["barrier"]) / 100.0 * spot,
-                t,
-                Monitoring.CONTINUOUS
-                if values["monitoring"] == "Continuously"
-                else Monitoring.EUROPEAN,
-            )
-            s = Strategy(option.label, Family.CUSTOM, (Leg(option, 1.0),))
-        return s.short() if values["side"] == "Short" else s
-
-    return build
-
-
-def _strikes_pct(name: str, values: dict[str, float | str]) -> tuple[float, ...]:
-    k, w = float(values["strike"]), float(values["width"])
-    if name == "Bull call spread":
-        return (k, k + w)
-    if name == "Call butterfly":
-        return (k - w, k, k + w)
-    return (k,)
-
-
-def _kind(name: str, values: dict[str, float | str]) -> str:
-    if name == "Barrier option":
-        return str(values["kind"])
-    return "put" if "Put" in name or name == "Digital put" else "call"
 
 
 def _atm_band(market: Market, strike: float, maturity: float) -> tuple[float, float]:
@@ -108,113 +41,28 @@ st.caption(
 )
 
 with st.container(border=True):
-    name = state.choice(st.pills, "Instrument", "lab_instrument", list(INSTRUMENTS))
-    family = INSTRUMENTS[name]
-    values: dict[str, float | str] = {}
-    top = st.columns(3)
-    with top[0]:
-        values["side"] = state.choice(
-            st.radio, "Position", "lab_side", ["Long", "Short"], horizontal=True
-        )
-    with top[1]:
-        vol_source = state.choice(
-            st.radio,
-            "Volatility",
-            "lab_vol_source",
-            ["Flat", "Smile of the Volatility surface page"],
-            horizontal=True,
-        )
-    sliders = st.columns(3)
-    with sliders[0]:
-        values["strike"] = state.persistent(
-            st.slider,
-            "Strike (% of spot)",
-            "lab_strike",
-            100.0,
-            min_value=50.0,
-            max_value=150.0,
-            step=1.0,
-        )
-    with sliders[1]:
-        maturity = state.persistent(
-            st.slider,
-            "Time to maturity (years)",
-            "lab_maturity",
-            1.0,
-            min_value=0.02,
-            max_value=5.0,
-            step=0.01,
-        )
-    with sliders[2]:
-        flat_vol = state.persistent(
-            st.slider,
-            "Flat volatility (%)",
-            "lab_vol",
-            20.0,
-            min_value=5.0,
-            max_value=80.0,
-            step=0.5,
-            disabled=vol_source != "Flat",
-        )
-    values["width"] = 10.0
-    if family == "spread":
-        values["width"] = state.persistent(
-            st.slider,
-            "Distance between strikes (% of spot)",
-            "lab_width",
-            10.0,
-            min_value=2.0,
-            max_value=40.0,
-            step=1.0,
-        )
-    if family == "barrier":
-        b = st.columns(4)
-        with b[0]:
-            values["kind"] = state.choice(st.radio, "Option", "lab_kind", ["call", "put"])
-        with b[1]:
-            values["barrier_type"] = state.choice(
-                st.selectbox, "Barrier", "lab_barrier_type", list(BARRIER_TYPES), "down-and-out"
-            )
-        with b[2]:
-            values["barrier"] = state.persistent(
-                st.slider,
-                "Barrier (% of spot)",
-                "lab_barrier",
-                80.0,
-                min_value=40.0,
-                max_value=160.0,
-                step=1.0,
-            )
-        with b[3]:
-            values["monitoring"] = state.choice(
-                st.radio, "Observed", "lab_monitoring", ["Continuously", "At maturity"]
-            )
+    selection = draw_inputs("lab")
+name, family, values, maturity = (
+    selection.name,
+    selection.family,
+    selection.values,
+    selection.maturity,
+)
 
 try:
     base = state.current_market()
 except ValueError as exc:
     st.error(f"The volatility surface is invalid: {exc}")
     st.stop()
-market = (
-    Market(base.spot, base.rate, base.dividend_yield, FlatVol(flat_vol / 100.0))
-    if vol_source == "Flat"
-    else base
-)
-instrument = _instrument(name, market.spot, values)
+market = selection.market(base)
+instrument = selection.instrument(market.spot)
 try:
     strategy = instrument(maturity)
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
-if family == "barrier":
-    up = str(values["barrier_type"]).startswith("up")
-    crossed = float(values["barrier"]) <= 100.0 if up else float(values["barrier"]) > 100.0
-    if crossed:
-        st.warning(
-            "The barrier is already crossed at today's spot: a knock-out option is dead, a "
-            "knock-in option is a vanilla. Move the barrier to the other side of 100 %."
-        )
+crossed_barrier_warning(selection)
 spots = SPOTS_PCT / 100.0 * market.spot
 profile = spot_profile(instrument, market, maturity, spots)
 now = {
@@ -223,9 +71,9 @@ now = {
         greeks_at(strategy, market) | second_order_at(instrument, market, maturity)
     ).items()
 }
-strikes_pct = _strikes_pct(name, values)
+strikes_pct = selection.strikes_pct
 single = len(strikes_pct) == 1 and family != "volatility"
-kind = _kind(name, values)
+kind = selection.kind
 money = moneyness(kind, strikes_pct[0] / 100.0 * market.spot, market, maturity) if single else None
 quarter = (
     float(greeks_at(instrument(maturity / 4.0), market)["Gamma (%)"]) if maturity > 0.08 else None
