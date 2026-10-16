@@ -17,6 +17,8 @@ def app():
     at = AppTest.from_file(str(ENTRY), default_timeout=60)
     at.run()
     assert not at.exception
+    at.switch_page("views/vanilla_options.py").run()  # the home page is the product finder
+    assert not at.exception
     return at
 
 

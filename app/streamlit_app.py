@@ -15,12 +15,19 @@ state.init()
 
 page = st.navigation(
     {
+        "Start": [
+            st.Page(
+                "views/product_finder.py",
+                title="Product finder",
+                icon=":material/explore:",
+                default=True,
+            ),
+        ],
         "Pricing": [
             st.Page(
                 "views/vanilla_options.py",
                 title="Vanilla options",
                 icon=":material/stacked_line_chart:",
-                default=True,
             ),
             st.Page(
                 "views/greeks_lab.py",
@@ -61,8 +68,6 @@ page = st.navigation(
 )
 
 with st.sidebar:
-    st.markdown("**Coming next**")
-    st.markdown(":gray[Product finder]")
     st.divider()
     st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
 

@@ -12,6 +12,7 @@ from spricer.bricks import Underlying
 from spricer.market import InterpolatedVolSurface, Market
 from spricer.mc.coupon_notes import CouponNoteMonteCarlo
 from spricer.monitoring import Monitoring
+from spricer.packaging import Equivalence
 from spricer.products.coupon_notes import CouponNote
 from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
@@ -659,5 +660,34 @@ def scenario_heatmap_figure(
         yaxis_title="Volatility move",
         height=460,
         margin={"t": 60, "r": 10},
+    )
+    return fig
+
+
+def packaging_figure(equivalence: Equivalence, spot: float) -> go.Figure:
+    """Payoffs at maturity of both constructions of a pair (they coincide)."""
+    grid = np.linspace(0.0, 2.0 * spot, 401)
+    fig = go.Figure()
+    for construction, style in (
+        (equivalence.first, {"color": TOTAL_COLOR, "width": 5}),
+        (equivalence.second, {"color": SHORT_COLORS[1], "width": 2, "dash": "dash"}),
+    ):
+        fig.add_trace(
+            go.Scatter(
+                x=100.0 * grid / spot,
+                y=100.0 * np.asarray(construction.strategy.payoff(grid)) / spot,
+                name=construction.name,
+                mode="lines",
+                line=style,
+            )
+        )
+    fig.update_layout(
+        title="Payoff at maturity: the two lines coincide",
+        xaxis_title="Underlying at maturity (% of today)",
+        yaxis_title="Paid (% of today's spot)",
+        legend={"orientation": "h", "y": -0.25},
+        height=380,
+        margin={"t": 60, "r": 10},
+        hovermode="x unified",
     )
     return fig
