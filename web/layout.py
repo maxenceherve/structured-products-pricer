@@ -14,10 +14,17 @@ from dash import dcc, html
 from spricer.market import InterpolatedVolSurface, Market
 from web import registry
 from web.market import MATURITY, MarketData, strike_field
+from web.option_page import option_page
+from web.options import setup_of
 from web.registry import Product
 from web.thumbnails import payoff_data_uri
 
-STRUCTURED = (registry.CAPITAL_PROTECTION, registry.YIELD, registry.AUTOCALLS)
+STRUCTURED = (
+    registry.CAPITAL_PROTECTION,
+    registry.CERTIFICATES,
+    registry.YIELD,
+    registry.AUTOCALLS,
+)
 
 
 # --- Top bar and market panel ------------------------------------------------------------------
@@ -234,7 +241,9 @@ def gallery(query: str | None = None) -> html.Div:
 
 
 def product_page(product: Product) -> html.Div:
-    """Skeleton of a product page: terms on the left, results in tabs on the right."""
+    """Product page: terms on the left, results in tabs on the right."""
+    if setup_of(product) is not None:
+        return option_page(product)
     tabs = ["Payoff", "Decomposition", "Greeks", "Risk & hedging"]
     if product.family in STRUCTURED:
         tabs += ["Monte Carlo", "Solve for"]

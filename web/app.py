@@ -12,7 +12,7 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 
-from web import layout, registry
+from web import layout, option_page, registry
 from web.market import (
     MATURITY,
     MarketData,
@@ -156,6 +156,7 @@ def create_app() -> dash.Dash:
         Output("smile-graph", "figure"),
         Input("market-data", "data"),
     )(market_view)
+    option_page.register(app)
     return app
 
 
