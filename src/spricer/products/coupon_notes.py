@@ -21,8 +21,9 @@ schedule (non-call period, step-down) still counts from issue; coupons in memory
 already breached are inputs.
 
 Named constructors build the usual products (EUSIPA families 12xx and 13xx): reverse
-convertible, barrier reverse convertible, Athena (autocall paying the accumulated coupons when
-called) and Phoenix (conditional coupons below the autocall level, with or without memory).
+convertible, barrier reverse convertible, their autocallable versions (certain coupons until the
+call, no memory), Athena (autocall paying the accumulated coupons when called) and Phoenix
+(conditional coupons below the autocall level, with or without memory).
 """
 
 from __future__ import annotations
@@ -323,6 +324,53 @@ def barrier_reverse_convertible(
     )
 
 
+def autocallable_reverse_convertible(
+    *,
+    maturity: float,
+    frequency: int,
+    coupon_pa: float,
+    autocall_level: float = 100.0,
+    barrier: float | None = None,
+    step_down: float = 0.0,
+    non_call: int = 0,
+    strike: float = 100.0,
+    monitoring: Monitoring = Monitoring.EUROPEAN,
+    state: LifeState = NEW_NOTE,
+) -> CouponNote:
+    """A (barrier) reverse convertible that can be called back early, without memory.
+
+    The coupons are certain until the call: no coupon condition, nothing to remember. Without
+    ``barrier`` the capital is at risk below the strike at maturity (reverse convertible); with
+    it, only once the barrier has been breached.
+    """
+    n = round(maturity * frequency)
+    obs = tuple(
+        Observation(
+            t,
+            coupon_pa / frequency,
+            0.0,
+            _autocall_level(k, n, autocall_level, non_call, step_down),
+        )
+        for k, t in schedule(maturity, frequency, state.elapsed)
+    )
+    if barrier is None:
+        return CouponNote(
+            "Autocallable reverse convertible",
+            obs,
+            protection_barrier=strike,
+            put_strike=strike,
+            barrier_breached=state.barrier_breached,
+        )
+    return CouponNote(
+        "Autocallable barrier reverse convertible",
+        obs,
+        protection_barrier=barrier,
+        put_strike=strike,
+        monitoring=monitoring,
+        barrier_breached=state.barrier_breached,
+    )
+
+
 def athena(
     *,
     maturity: float,
@@ -490,6 +538,43 @@ COUPON_NOTE_CATALOG: tuple[CouponNoteSpec, ...] = (
             frequency=f,
             coupon_pa=v["coupon_pa"],
             barrier=v["barrier"],
+            strike=v["strike"],
+            monitoring=mon,
+            state=st,
+        ),
+    ),
+    CouponNoteSpec(
+        "Autocallable reverse convertible",
+        "Autocallables",
+        "A certain coupon at each date until the note is called back at par, at or above the "
+        "autocall barrier; if never called, the performance below the strike at maturity.",
+        (COUPON, AUTOCALL, STEP_DOWN, NON_CALL, STRIKE),
+        lambda v, t, f, mon, st: autocallable_reverse_convertible(
+            maturity=t,
+            frequency=f,
+            coupon_pa=v["coupon_pa"],
+            autocall_level=v["autocall_level"],
+            step_down=v["step_down"],
+            non_call=round(v["non_call"]),
+            strike=v["strike"],
+            state=st,
+        ),
+        monitoring_choice=False,
+    ),
+    CouponNoteSpec(
+        "Autocallable barrier reverse convertible",
+        "Autocallables",
+        "A certain coupon at each date until the note is called back at par; if never called, "
+        "the capital is at risk only once the barrier has been breached.",
+        (replace(COUPON, default=6.0), AUTOCALL, BARRIER, STEP_DOWN, NON_CALL, STRIKE),
+        lambda v, t, f, mon, st: autocallable_reverse_convertible(
+            maturity=t,
+            frequency=f,
+            coupon_pa=v["coupon_pa"],
+            autocall_level=v["autocall_level"],
+            barrier=v["barrier"],
+            step_down=v["step_down"],
+            non_call=round(v["non_call"]),
             strike=v["strike"],
             monitoring=mon,
             state=st,

@@ -11,6 +11,7 @@ from dash import html
 from spricer.market import InterpolatedVolSurface
 from spricer.products.capital_protection import NOTE_CATALOG
 from spricer.products.coupon_notes import COUPON_NOTE_CATALOG
+from spricer.products.participation import PARTICIPATION_CATALOG, SHARK_WARRANTS
 from spricer.strategies import CATALOG
 from web import layout, registry
 from web.app import (
@@ -38,11 +39,12 @@ def text_of(component) -> str:
 def test_every_product_of_the_library_is_in_the_gallery_once():
     names = [p.name for p in registry.PRODUCTS]
     expected = [s.name for s in CATALOG] + [s.name for s in NOTE_CATALOG]
-    expected += [s.name for s in COUPON_NOTE_CATALOG]
+    expected += [s.name for s in COUPON_NOTE_CATALOG + PARTICIPATION_CATALOG + SHARK_WARRANTS]
     for name in expected:
         assert names.count(name) == 1, name
     assert len({p.slug for p in registry.PRODUCTS}) == len(registry.PRODUCTS)
-    assert sum(p.family == registry.BARRIERS for p in registry.PRODUCTS) == 8
+    assert sum(p.family == registry.BARRIERS for p in registry.PRODUCTS) == 10
+    assert sum(p.family == registry.CERTIFICATES for p in registry.PRODUCTS) == 6
     assert {p.family for p in registry.PRODUCTS} == set(registry.FAMILIES)
     assert registry.find("bull-call-spread") is not None
     assert registry.find("nothing") is None

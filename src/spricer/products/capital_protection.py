@@ -36,6 +36,7 @@ from spricer.bricks import (
     DigitalOption,
     EuropeanOption,
     OneTouch,
+    Underlying,
     ZeroCoupon,
 )
 from spricer.monitoring import Monitoring, require_european
@@ -69,6 +70,10 @@ class _Builder:
 
     def bond(self, role: str, amount_pct: float) -> None:
         self.legs.append(NoteLeg(role, ZeroCoupon(self.maturity), amount_pct))
+
+    def underlying(self, role: str, participation_pct: float = 100.0) -> None:
+        """The underlying itself (prepaid forward), ``participation_pct`` % of its move."""
+        self.legs.append(NoteLeg(role, Underlying(self.maturity), self._units(participation_pct)))
 
     def _units(self, participation_pct: float) -> float:
         return participation_pct / 100.0 * NOTIONAL / self.initial

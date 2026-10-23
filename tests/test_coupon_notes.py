@@ -1,6 +1,7 @@
 """Coupon notes: schedules, builders, replication, Monte Carlo legs, probabilities, solver."""
 
 import math
+from typing import Any
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from spricer.products.coupon_notes import (
     LifeState,
     Observation,
     athena,
+    autocallable_reverse_convertible,
     barrier_reverse_convertible,
     find_coupon_note,
     phoenix,
@@ -247,6 +249,40 @@ def test_without_call_and_coupon_barrier_a_phoenix_is_a_barrier_reverse_converti
     a, b = evaluate_note(brc, basket, paths), evaluate_note(phx, basket, paths)
     assert b.total.value == pytest.approx(a.total.value, abs=1e-10)
     assert all(c.value == 0.0 for c in b.call_probability)
+
+
+def test_autocallable_reverse_convertibles_are_phoenixes_with_certain_coupons_and_no_memory():
+    basket = Basket.single(FLAT)
+    terms: dict[str, Any] = {
+        "maturity": 2.0,
+        "frequency": 4,
+        "coupon_pa": 7.0,
+        "step_down": 2.0,
+        "non_call": 1,
+    }
+    abrc = autocallable_reverse_convertible(**terms, barrier=60.0)
+    arc = autocallable_reverse_convertible(**terms, strike=95.0)
+    assert abrc.name == "Autocallable barrier reverse convertible"
+    assert arc.name == "Autocallable reverse convertible"
+    assert arc.protection_barrier == arc.put_strike == 95.0
+    assert all(o.coupon_level == 0.0 for o in abrc.observations)
+    assert [o.autocall_level for o in abrc.observations][:3] == [None, 100.0, 98.0]
+    assert not abrc.memory
+    assert abrc.callable
+    phx = phoenix(**terms, coupon_level=0.0, barrier=60.0, memory=False)
+    paths = simulate_note(abrc, basket, n_paths=10_000, seed=5)
+    called = evaluate_note(abrc, basket, paths)
+    assert called.total.value == pytest.approx(evaluate_note(phx, basket, paths).total.value)
+    assert sum(c.value for c in called.call_probability) > 0.3
+    assert called.expected_life.value < 2.0
+    # an autocall that is never reached leaves the barrier reverse convertible
+    never = autocallable_reverse_convertible(**terms, barrier=60.0, autocall_level=1e9)
+    brc = barrier_reverse_convertible(maturity=2.0, frequency=4, coupon_pa=7.0, barrier=60.0)
+    assert evaluate_note(never, basket, paths).total.value == pytest.approx(
+        evaluate_note(brc, basket, paths).total.value, abs=1e-10
+    )
+    # and the coupons stop at the call: fewer coupons are paid than on the plain note
+    assert called.legs[0].value < evaluate_note(brc, basket, paths).legs[0].value
 
 
 def test_memory_pays_at_least_as_much_and_a_breach_costs(market):

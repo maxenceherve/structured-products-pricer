@@ -11,21 +11,25 @@ import numpy as np
 from spricer._typing import FloatArray
 from spricer.bricks import BARRIER_TYPES, BarrierOption, EuropeanOption
 from spricer.monitoring import Monitoring
-from spricer.products.capital_protection import NOTE_CATALOG
-from spricer.products.coupon_notes import COUPON_NOTE_CATALOG, CouponNote
+from spricer.products.capital_protection import NOTE_CATALOG, NoteSpec
+from spricer.products.coupon_notes import COUPON_NOTE_CATALOG, CouponNote, CouponNoteSpec
+from spricer.products.participation import PARTICIPATION_CATALOG, SHARK_WARRANTS
 from spricer.strategies import CATALOG
 
 OPTIONS = "Options & strategies"
 BARRIERS = "Barrier options"
 CAPITAL_PROTECTION = "Capital protection"
+CERTIFICATES = "Participation certificates"
 YIELD = "Yield enhancement"
 AUTOCALLS = "Autocallables"
-FAMILIES = (OPTIONS, BARRIERS, CAPITAL_PROTECTION, YIELD, AUTOCALLS)
+FAMILIES = (OPTIONS, BARRIERS, CAPITAL_PROTECTION, CERTIFICATES, YIELD, AUTOCALLS)
 FAMILY_BLURBS = {
     OPTIONS: "Calls, puts and their combinations: spreads, volatility plays, butterflies, "
     "digitals.",
     BARRIERS: "Options activated or cancelled when the underlying touches a level.",
     CAPITAL_PROTECTION: "A bond that pays the capital back, plus options for the upside.",
+    CERTIFICATES: "The underlying itself, reshaped by options: more upside, a bonus, or a "
+    "cushion on the way down.",
     YIELD: "A high coupon, paid for by a put sold on the underlying.",
     AUTOCALLS: "Coupons and an early redemption as soon as the underlying is back up.",
 }
@@ -118,21 +122,39 @@ def _barriers() -> list[Product]:
                     marker=level,
                 )
             )
+    for spec in SHARK_WARRANTS:
+        warrant = spec.build({}, 1.0, SPOT)
+        out.append(
+            Product(
+                slugify(spec.name),
+                spec.name,
+                BARRIERS,
+                "Sharks",
+                _of(warrant.payoff),
+                marker=_barrier(spec),
+            )
+        )
     return out
 
 
-def _capital_protection() -> list[Product]:
+def _barrier(spec: NoteSpec | CouponNoteSpec) -> float | None:
+    """Default barrier of a note, None when it has none."""
+    return next((p.default for p in spec.params if p.key in ("barrier", "airbag", "buffer")), None)
+
+
+def _notes(catalog: tuple[NoteSpec, ...], family: str) -> list[Product]:
     out = []
-    for spec in NOTE_CATALOG:
+    for spec in catalog:
         note = spec.build({}, 3.0, SPOT)
         out.append(
             Product(
                 slugify(spec.name),
                 spec.name,
-                CAPITAL_PROTECTION,
+                family,
                 "",
                 _of(note.payoff),
                 notional_line=True,
+                marker=_barrier(spec),
             )
         )
     return out
@@ -150,13 +172,18 @@ def _coupon_notes() -> list[Product]:
                 "",
                 _never_breached(note),
                 notional_line=True,
+                marker=_barrier(spec),
             )
         )
     return out
 
 
 PRODUCTS: tuple[Product, ...] = tuple(
-    _strategies() + _barriers() + _capital_protection() + _coupon_notes()
+    _strategies()
+    + _barriers()
+    + _notes(NOTE_CATALOG, CAPITAL_PROTECTION)
+    + _notes(PARTICIPATION_CATALOG, CERTIFICATES)
+    + _coupon_notes()
 )
 BY_SLUG = {p.slug: p for p in PRODUCTS}
 
