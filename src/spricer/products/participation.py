@@ -16,6 +16,13 @@ of the notional. ``U`` is the underlying (a prepaid forward), ``C``/``P`` calls 
   airbag level ``A``, then a loss that reaches the whole notional only at zero;
 * buffer certificate: ``ZC(100) + part x [C(100) - C(cap)] - P(B)``: the capital back down to
   the buffer ``B``, then a one-for-one loss;
+* sprint certificate: ``U + (part - 100 %) C(100) - part x C(cap)``: a leveraged rise up to the
+  cap, all the fall;
+* reverse bonus certificate: ``P(R) + UOC(R - bonus, B) [- P(R - cap)]``: gains as the
+  underlying falls (``R - performance``, ``R`` the reverse level), at least the bonus while the
+  upper barrier holds;
+* discount certificate: ``U - C(cap)``: the underlying bought at a discount, capped (EUSIPA
+  1200, yield enhancement);
 * shark warrant: ``part x CallUpAndOut(K, B) + rebate x OneTouch(B)`` (or the put version):
   a capped, knock-out option with a rebate, without capital protection.
 """
@@ -23,6 +30,7 @@ of the notional. ``U`` is the underlying (a prepaid forward), ``C``/``P`` calls 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 import numpy as np
 
@@ -256,6 +264,91 @@ def buffer_certificate(
     return b.note("Buffer certificate", formula, tuple(levels))
 
 
+def sprint_certificate(
+    *, participation: float, cap: float, maturity: float, initial: float
+) -> Note:
+    """``participation`` % of the rise up to ``cap``, the underlying one for one below 100 %."""
+    _positive(participation=participation, cap=cap)
+    if cap <= 100.0:
+        raise ValueError("the cap must be above the initial level")
+    b = _Builder(initial, maturity)
+    b.underlying("Underlying")
+    b.option("Long call (leverage)", "call", 100.0, participation - 100.0)
+    b.option("Short call (cap)", "call", cap, -participation)
+
+    def formula(p: FloatArray) -> FloatArray:
+        gain = participation / 100.0 * np.clip(p - 100.0, 0.0, cap - 100.0)
+        return np.asarray(np.minimum(p, 100.0) + gain)
+
+    levels = (
+        Level("Initial level", 100.0, LevelKind.PERFORMANCE),
+        Level("Cap", cap, LevelKind.PERFORMANCE),
+    )
+    return b.note("Sprint certificate", formula, levels)
+
+
+def reverse_bonus_certificate(
+    *,
+    reverse_level: float,
+    bonus: float,
+    barrier: float,
+    cap: float | None,
+    maturity: float,
+    initial: float,
+    monitoring: Monitoring = Monitoring.EUROPEAN,
+    observations: int | None = None,
+) -> Note:
+    """``reverse_level - performance``, at least ``bonus`` below ``barrier``, up to ``cap``."""
+    _positive(reverse_level=reverse_level, bonus=bonus, barrier=barrier, cap=cap)
+    if bonus >= reverse_level:
+        raise ValueError("the bonus must be below the reverse level")
+    if not reverse_level - bonus < barrier < reverse_level:
+        raise ValueError("the barrier must be between reverse level - bonus and the reverse level")
+    if cap is not None and not bonus < cap < reverse_level:
+        raise ValueError("the cap must be between the bonus and the reverse level")
+    b = _Builder(initial, maturity)
+    b.option("Long put (reverse)", "put", reverse_level, 100.0)
+    b.barrier_option(
+        "Long call up-and-out (bonus)",
+        "call",
+        "up-and-out",
+        reverse_level - bonus,
+        barrier,
+        100.0,
+        monitoring,
+        observations,
+    )
+    if cap is not None:
+        b.option("Short put (cap)", "put", reverse_level - cap, -100.0)
+
+    def formula(p: FloatArray) -> FloatArray:
+        reverse = np.maximum(reverse_level - p, 0.0)
+        out = np.where(p < barrier, np.maximum(reverse, bonus), reverse)
+        return np.asarray(out if cap is None else np.minimum(out, cap))
+
+    levels = [
+        Level("Reverse level", reverse_level, LevelKind.PERFORMANCE),
+        Level("Bonus level", bonus, LevelKind.PAYOFF),
+        Level("Barrier", barrier, LevelKind.PERFORMANCE),
+    ]
+    if cap is not None:
+        levels.append(Level("Cap", cap, LevelKind.PAYOFF))
+    return b.note("Reverse bonus certificate", formula, tuple(levels), monitoring)
+
+
+def discount_certificate(*, cap: float, maturity: float, initial: float) -> Note:
+    """The underlying bought at a discount, paid at most ``cap``."""
+    _positive(cap=cap)
+    b = _Builder(initial, maturity)
+    b.underlying("Underlying")
+    b.option("Short call (cap)", "call", cap, -100.0)
+
+    def formula(p: FloatArray) -> FloatArray:
+        return np.asarray(np.minimum(p, cap))
+
+    return b.note("Discount certificate", formula, (Level("Cap", cap, LevelKind.PERFORMANCE),))
+
+
 def shark_warrant(
     *,
     direction: str,
@@ -437,6 +530,50 @@ PARTICIPATION_CATALOG: tuple[NoteSpec, ...] = (
             monitoring=mon,
         ),
     ),
+    NoteSpec(
+        "Sprint certificate",
+        "A leveraged share of the rise up to the cap, and all of the fall.",
+        (NoteParam("participation", "Upside participation", 200.0), replace(CAP, default=120.0)),
+        lambda v, t, s0, mon, obs: sprint_certificate(
+            participation=v["participation"], cap=v["cap"], maturity=t, initial=s0
+        ),
+    ),
+    NoteSpec(
+        "Reverse bonus certificate",
+        "Gains as the underlying falls, and at least the bonus as long as it never rises to "
+        "the barrier.",
+        (
+            NoteParam(
+                "reverse_level", "Reverse level", 200.0, "Paid: reverse level - performance."
+            ),
+            NoteParam("bonus", "Bonus level", 115.0),
+            NoteParam("barrier", "Barrier", 130.0, "Bonus lost once reached."),
+            CAPPED,
+            replace(CAP, default=150.0),
+        ),
+        lambda v, t, s0, mon, obs: reverse_bonus_certificate(
+            reverse_level=v["reverse_level"],
+            bonus=v["bonus"],
+            barrier=v["barrier"],
+            cap=_cap(v),
+            maturity=t,
+            initial=s0,
+            monitoring=mon,
+            observations=obs,
+        ),
+        has_barrier=True,
+        monitoring_choice=True,
+    ),
+)
+
+YIELD_CERTIFICATES: tuple[NoteSpec, ...] = (
+    NoteSpec(
+        "Discount certificate",
+        "The underlying bought below its price, in exchange for a cap: the investor has sold a "
+        "call.",
+        (replace(CAP, default=105.0),),
+        lambda v, t, s0, mon, obs: discount_certificate(cap=v["cap"], maturity=t, initial=s0),
+    ),
 )
 
 SHARK_WARRANTS: tuple[NoteSpec, ...] = tuple(
@@ -460,7 +597,7 @@ SHARK_WARRANTS: tuple[NoteSpec, ...] = tuple(
 
 def find_certificate(name: str) -> NoteSpec:
     """The certificate or warrant with this name."""
-    for spec in PARTICIPATION_CATALOG + SHARK_WARRANTS:
+    for spec in PARTICIPATION_CATALOG + YIELD_CERTIFICATES + SHARK_WARRANTS:
         if spec.name == name:
             return spec
     raise KeyError(name)

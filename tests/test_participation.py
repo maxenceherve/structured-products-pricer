@@ -14,13 +14,15 @@ from spricer.products import participation as pc
 from spricer.products.capital_protection import NoteSpec
 
 T, INITIAL = 3.0, 100.0
-SPECS = pc.PARTICIPATION_CATALOG + pc.SHARK_WARRANTS
+SPECS = pc.PARTICIPATION_CATALOG + pc.YIELD_CERTIFICATES + pc.SHARK_WARRANTS
 VARIANTS: list[tuple[NoteSpec, dict[str, float]]] = [(spec, {}) for spec in SPECS] + [
     (pc.find_certificate("Bonus certificate"), {"capped": 1.0}),
     (pc.find_certificate("Airbag certificate"), {"capped": 1.0, "participation": 80.0}),
     (pc.find_certificate("Buffer certificate"), {"capped": 1.0, "participation": 150.0}),
     (pc.find_certificate("Twin-win certificate"), {"participation_up": 120.0, "barrier": 60.0}),
     (pc.find_certificate("Outperformance certificate"), {"participation": 100.0}),
+    (pc.find_certificate("Reverse bonus certificate"), {"capped": 1.0}),
+    (pc.find_certificate("Sprint certificate"), {"participation": 100.0}),
 ]
 IDS = [f"{spec.name}{'-' + '-'.join(v) if v else ''}" for spec, v in VARIANTS]
 
@@ -79,17 +81,33 @@ def test_shapes_at_key_levels():
     # airbag at 80 %: 100 % down to 80, then 100 / 80 of the underlying (50 -> 62.5)
     assert at("Airbag certificate", {}, 50.0, 85.0, 130.0) == [62.5, 100.0, 130.0]
     assert at("Buffer certificate", {}, 50.0, 95.0, 130.0) == [60.0, 100.0, 130.0]
+    # sprint: twice the rise up to 120 %, i.e. at most 140 %
+    assert at("Sprint certificate", {}, 70.0, 110.0, 150.0) == [70.0, 120.0, 140.0]
+    # reverse bonus: 200 % - performance, at least 115 % below the 130 % barrier
+    assert at("Reverse bonus certificate", {}, 50.0, 100.0, 140.0, 250.0) == [
+        150.0,
+        115.0,
+        60.0,
+        0.0,
+    ]
+    assert at("Reverse bonus certificate", {"capped": 1.0}, 20.0) == [150.0]
+    assert at("Discount certificate", {}, 80.0, 120.0) == [80.0, 105.0]
     assert at("Shark warrant (call)", {}, 90.0, 120.0, 130.0) == [0.0, 20.0, 5.0]
     assert at("Shark warrant (put)", {}, 69.0, 80.0, 110.0) == [5.0, 20.0, 0.0]
 
 
 def test_the_barrier_can_be_observed_along_the_path():
     market = market_at(1.0)
-    for name in ("Bonus certificate", "Twin-win certificate", "Barrier outperformance certificate"):
+    for name in (
+        "Bonus certificate",
+        "Twin-win certificate",
+        "Barrier outperformance certificate",
+        "Reverse bonus certificate",
+    ):
         spec = pc.find_certificate(name)
         european = float(spec.build({}, T, INITIAL).value(market))
         continuous = float(spec.build({}, T, INITIAL, Monitoring.CONTINUOUS).value(market))
-        assert continuous < european, name  # the down-and-in put sold is triggered more often
+        assert continuous < european, name  # the bonus is lost more often
     shark = pc.find_certificate("Shark warrant (call)")
     roles = [leg.role for leg in shark.build({}, T, INITIAL, Monitoring.DISCRETE, 36).legs]
     assert roles == ["Long call up-and-out", "Rebate if the barrier is touched"]
@@ -119,6 +137,12 @@ def test_airbag_and_buffer_are_european():
         ("Airbag certificate", {"capped": 1.0, "cap": 100.0}, "cap"),
         ("Buffer certificate", {"buffer": 120.0}, "buffer level"),
         ("Buffer certificate", {"capped": 1.0, "cap": 90.0}, "cap"),
+        ("Sprint certificate", {"cap": 100.0}, "cap"),
+        ("Discount certificate", {"cap": 0.0}, "cap"),
+        ("Reverse bonus certificate", {"bonus": 200.0}, "bonus"),
+        ("Reverse bonus certificate", {"barrier": 80.0}, "barrier"),
+        ("Reverse bonus certificate", {"barrier": 210.0}, "barrier"),
+        ("Reverse bonus certificate", {"capped": 1.0, "cap": 110.0}, "cap"),
         ("Shark warrant (call)", {"barrier": 95.0}, "beyond the strike"),
         ("Shark warrant (put)", {"barrier": 105.0}, "beyond the strike"),
         ("Shark warrant (put)", {"rebate": -1.0}, "rebate"),

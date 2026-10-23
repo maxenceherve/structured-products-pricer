@@ -11,7 +11,11 @@ from dash import html
 from spricer.market import InterpolatedVolSurface
 from spricer.products.capital_protection import NOTE_CATALOG
 from spricer.products.coupon_notes import COUPON_NOTE_CATALOG
-from spricer.products.participation import PARTICIPATION_CATALOG, SHARK_WARRANTS
+from spricer.products.participation import (
+    PARTICIPATION_CATALOG,
+    SHARK_WARRANTS,
+    YIELD_CERTIFICATES,
+)
 from spricer.strategies import CATALOG
 from web import layout, registry
 from web.app import (
@@ -39,12 +43,13 @@ def text_of(component) -> str:
 def test_every_product_of_the_library_is_in_the_gallery_once():
     names = [p.name for p in registry.PRODUCTS]
     expected = [s.name for s in CATALOG] + [s.name for s in NOTE_CATALOG]
-    expected += [s.name for s in COUPON_NOTE_CATALOG + PARTICIPATION_CATALOG + SHARK_WARRANTS]
+    expected += [s.name for s in COUPON_NOTE_CATALOG + PARTICIPATION_CATALOG]
+    expected += [s.name for s in YIELD_CERTIFICATES + SHARK_WARRANTS]
     for name in expected:
         assert names.count(name) == 1, name
     assert len({p.slug for p in registry.PRODUCTS}) == len(registry.PRODUCTS)
     assert sum(p.family == registry.BARRIERS for p in registry.PRODUCTS) == 10
-    assert sum(p.family == registry.CERTIFICATES for p in registry.PRODUCTS) == 6
+    assert sum(p.family == registry.CERTIFICATES for p in registry.PRODUCTS) == 8
     assert {p.family for p in registry.PRODUCTS} == set(registry.FAMILIES)
     assert registry.find("bull-call-spread") is not None
     assert registry.find("nothing") is None
@@ -136,6 +141,8 @@ def test_routes():
     assert "Bull call spread" in text_of(route("/product/bull-call-spread/", None))
     assert "Monte Carlo" in text_of(route("/product/phoenix-autocall", None))
     assert "Monte Carlo" not in text_of(route("/product/call", None))
+    assert "Monte Carlo" not in text_of(route("/product/shark-warrant-call", None))
+    assert "Monte Carlo" in text_of(route("/product/bonus-certificate", None))
     assert "Find a product" in text_of(route("/finder", None))
     assert "Page not found" in text_of(route("/product/nothing", None))
     assert "Page not found" in text_of(route("/elsewhere", None))
@@ -192,7 +199,7 @@ def test_the_app_builds_with_every_piece():
     text = text_of(app.layout)
     for piece in ("market-panel", "vol-grid", "search", "market-button", "page"):
         assert piece in text
-    assert len(app.callback_map) == 6
+    assert len(app.callback_map) == 17
     assert isinstance(layout.not_found("/x"), html.Div)
 
 

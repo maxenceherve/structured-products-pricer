@@ -13,7 +13,11 @@ from spricer.bricks import BARRIER_TYPES, BarrierOption, EuropeanOption
 from spricer.monitoring import Monitoring
 from spricer.products.capital_protection import NOTE_CATALOG, NoteSpec
 from spricer.products.coupon_notes import COUPON_NOTE_CATALOG, CouponNote, CouponNoteSpec
-from spricer.products.participation import PARTICIPATION_CATALOG, SHARK_WARRANTS
+from spricer.products.participation import (
+    PARTICIPATION_CATALOG,
+    SHARK_WARRANTS,
+    YIELD_CERTIFICATES,
+)
 from spricer.strategies import CATALOG
 
 OPTIONS = "Options & strategies"
@@ -30,7 +34,7 @@ FAMILY_BLURBS = {
     CAPITAL_PROTECTION: "A bond that pays the capital back, plus options for the upside.",
     CERTIFICATES: "The underlying itself, reshaped by options: more upside, a bonus, or a "
     "cushion on the way down.",
-    YIELD: "A high coupon, paid for by a put sold on the underlying.",
+    YIELD: "A high coupon or a discount, paid for by an option sold on the underlying.",
     AUTOCALLS: "Coupons and an early redemption as soon as the underlying is back up.",
 }
 
@@ -183,6 +187,7 @@ PRODUCTS: tuple[Product, ...] = tuple(
     + _barriers()
     + _notes(NOTE_CATALOG, CAPITAL_PROTECTION)
     + _notes(PARTICIPATION_CATALOG, CERTIFICATES)
+    + _notes(YIELD_CERTIFICATES, YIELD)
     + _coupon_notes()
 )
 BY_SLUG = {p.slug: p for p in PRODUCTS}
