@@ -106,6 +106,8 @@ uv sync --all-extras
 uv run streamlit run app/streamlit_app.py
 ```
 
+The new web app (Dash, in progress): `uv run python -m web.app`, then open http://localhost:8050.
+
 Checks, and the notebooks (rewritten and executed, figures saved to `docs/figures/`):
 
 ```bash

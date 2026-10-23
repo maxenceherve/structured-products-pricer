@@ -1,0 +1,30 @@
+:root {
+  --primary: #1f4e79;
+  --green: #1a9850;
+  --red: #d73027;
+  --soft: #f3f6fa;
+  --text: #1b2333;
+  --line: #dde3ec;
+}
+body { background: #ffffff; color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.top-bar { background: #ffffff; border-bottom: 1px solid var(--line); padding: 6px 0; }
+.top-bar-inner { display: flex; align-items: center; gap: 16px; }
+.search-box { max-width: 520px; flex: 1; border-radius: 999px; background: var(--soft); border: 1px solid var(--line); padding-left: 18px; }
+.search-box:focus { border-color: var(--primary); box-shadow: 0 0 0 0.15rem rgba(31, 78, 121, 0.15); background: #fff; }
+.gear-button { margin-left: auto; border-radius: 50%; width: 42px; height: 42px; font-size: 1.15rem; color: var(--primary); border: 1px solid var(--line); background: #fff; }
+.gear-button:hover { background: var(--soft); color: var(--primary); }
+.page-container { padding-top: 28px; padding-bottom: 48px; }
+.finder-banner { border: 1px solid var(--line); background: var(--soft); border-radius: 14px; }
+.family-section { margin-top: 36px; }
+.family-title { font-weight: 700; color: var(--primary); font-size: 1.6rem; margin-bottom: 2px; }
+.family-blurb { color: #5b6577; margin-bottom: 14px; }
+.group-title { font-weight: 600; color: var(--text); margin: 10px 0 12px; font-size: 1.02rem; }
+.card-link { text-decoration: none; color: inherit; display: block; height: 100%; }
+.product-card { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; height: 100%; transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease; }
+.product-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(27, 35, 51, 0.10); border-color: #b9c6d8; }
+.card-payoff { width: 100%; aspect-ratio: 240 / 140; background: var(--soft); padding: 6px; }
+.card-name { font-weight: 600; text-align: center; color: var(--text); }
+.product-title { font-weight: 700; color: var(--primary); margin-bottom: 18px; }
+.terms-card { border: 1px solid var(--line); border-radius: 14px; }
+.breadcrumb { background: transparent; padding: 0; margin-bottom: 8px; }
+.breadcrumb a { color: var(--primary); text-decoration: none; }
