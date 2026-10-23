@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -11,6 +12,7 @@ import charts
 import note_presentation as npres
 import presentation as pres
 import state
+import termsheet
 from spricer.analytic.barrier import bgk_warning
 from spricer.market import OverriddenVol
 from spricer.mc import price_note
@@ -325,6 +327,41 @@ with st.container(border=True):
             f"Black-Scholes digitals the note would be worth {price - skew:.2f} % instead of "
             f"{price:.2f} %."
         )
+    sheet_spec: NoteSpec = product_context["spec"]
+    labels = {p.key: f"{p.label} (%)" for p in sheet_spec.params if p.kind != "toggle"}
+    shown = {k: v for k, v in product_context["values"].items() if k in labels}
+    performances = np.arange(40.0, 170.0, 10.0)
+    sheet = termsheet.product_sheet(
+        note.name,
+        sheet_spec.description,
+        [
+            (
+                "Terms",
+                termsheet.terms_table(
+                    {**shown, "Maturity (years)": float(product_context["maturity"])}, labels
+                ),
+            ),
+            (
+                "Valuation",
+                f"Fair value {price:.2f} % of notional, of which the bond part {bond:.2f} % and "
+                f"the options {price - bond:+.2f} %. Barrier observation: "
+                f"{(note.monitoring or Monitoring.EUROPEAN).value.lower()}.",
+            ),
+            ("Brick decomposition", table),
+            (
+                "Payoff at maturity",
+                termsheet.maturity_scenarios(note.payoff(performances), performances),
+            ),
+        ],
+    )
+    st.download_button(
+        "Download product sheet",
+        sheet,
+        file_name=termsheet.file_name(note.name),
+        mime="text/html",
+        icon=":material/description:",
+        key="cp_sheet",
+    )
 
 with st.container(border=True):
     st.subheader("Monte Carlo check")

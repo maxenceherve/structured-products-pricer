@@ -1,5 +1,7 @@
 """Streamlit entry point: ``uv run streamlit run app/streamlit_app.py``."""
 
+from pathlib import Path
+
 import streamlit as st
 
 import spricer
@@ -12,6 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 state.init()
+ASSETS = Path(__file__).parent / "assets"
+st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "icon.svg"))
 
 page = st.navigation(
     {
@@ -68,7 +72,6 @@ page = st.navigation(
 )
 
 with st.sidebar:
-    st.divider()
     st.caption(f"Structured Products Pricer · spricer {spricer.__version__}")
 
 page.run()

@@ -94,6 +94,8 @@ def coupon_note_greeks(
     seed: int = 0,
     max_step: float = DEFAULT_MAX_STEP,
     common_random_numbers: bool = True,
+    delta_bump: float = DELTA_BUMP,
+    gamma_bump: float = GAMMA_BUMP,
 ) -> NoteGreeks:
     """Greeks of ``note`` by bump and revalue.
 
@@ -129,7 +131,7 @@ def coupon_note_greeks(
         def bumped(h: float, m: Market = market, i: int = i) -> FloatArray:
             return run(basket.with_market(i, m.with_spot(m.spot * (1.0 + h))))[0]
 
-        hd, hg = DELTA_BUMP, GAMMA_BUMP
+        hd, hg = delta_bump, gamma_bump
         vol_up, _ = run(basket.with_market(i, market.with_vol_shift(VOL_BUMP)))
         vol_down, _ = run(basket.with_market(i, market.with_vol_shift(-VOL_BUMP)))
         assets.append(

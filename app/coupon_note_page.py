@@ -16,6 +16,7 @@ import charts
 import greeks_explain as gx
 import presentation as pres
 import state
+import termsheet
 from spricer.market import Basket, Market
 from spricer.mc import check_correlation, nearest_correlation
 from spricer.mc.coupon_notes import LEG_NAMES, CouponNoteMonteCarlo, price_coupon_note
@@ -476,6 +477,62 @@ def _greeks(
     )
 
 
+def _sheet(
+    note: CouponNote,
+    spec: CouponNoteSpec,
+    context: dict[str, Any],
+    basket: Basket,
+    result: CouponNoteMonteCarlo,
+) -> None:
+    labels = {p.key: p.label if p.kind != "pct" else f"{p.label} (%)" for p in spec.params}
+    terms = dict(context["values"])
+    terms["Maturity (years)"] = float(context["maturity"])
+    terms["Observations a year"] = float(context["frequency"])
+    terms["Issue price (%)"] = float(context["issue_price"])
+    performances = np.arange(40.0, 170.0, 10.0)
+    underlyings = pd.DataFrame(
+        {
+            "Underlying": list(basket.names),
+            "Spot": [m.spot for m in basket.markets],
+            "Initial level": list(basket.initials),
+            "Dividend yield (%)": [100.0 * m.dividend_yield for m in basket.markets],
+        }
+    )
+    sheet = termsheet.product_sheet(
+        note.name,
+        spec.description,
+        [
+            ("Terms", termsheet.terms_table(terms, labels)),
+            ("Underlyings (worst performance)", underlyings),
+            ("Observation schedule", _schedule_table(note, result)),
+            (
+                "Valuation",
+                f"Fair value {result.total.value:.2f} % ± {result.total.std_error:.2f} (Monte "
+                f"Carlo standard error, {result.total.n_paths:,} paths, local volatility); "
+                f"issuer margin {float(context['issue_price']) - result.total.value:+.2f} %; "
+                f"expected life {result.expected_life.value:.2f} years; probability of a loss "
+                f"of capital {100.0 * result.loss_probability.value:.1f} %. Protection barrier "
+                f"observed {note.monitoring.value.lower()}.",
+            ),
+            ("Decomposition on common paths", _legs_table(result)),
+            (
+                "Paid at maturity if never called (barrier not breached before)",
+                termsheet.maturity_scenarios(
+                    note.maturity_payoff(performances, False), performances
+                ),
+            ),
+        ],
+    )
+    st.download_button(
+        "Download product sheet",
+        sheet,
+        file_name=termsheet.file_name(note.name),
+        mime="text/html",
+        icon=":material/description:",
+        key=f"{spec.family}_sheet",
+    )
+
+
 def _solver(
     family: str,
     spec: CouponNoteSpec,
@@ -678,6 +735,7 @@ def render(family: str, title: str) -> None:
         )
         _closed_form_check(note, basket, spread, result)
         _greeks(family, note, basket, spread, n_paths, fingerprint)
+        _sheet(note, spec, context, basket, result)
 
         payoff_tab, life_tab, schedule_tab = st.tabs(
             ["Payoff at maturity", "When does the note end?", "Observation schedule"]
