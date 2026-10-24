@@ -141,7 +141,7 @@ def test_routes():
     assert "Bull call spread" in text_of(route("/product/bull-call-spread/", None))
     assert "Monte Carlo" in text_of(route("/product/phoenix-autocall", None))
     assert "Monte Carlo" not in text_of(route("/product/call", None))
-    assert "Monte Carlo" not in text_of(route("/product/shark-warrant-call", None))
+    assert "Monte Carlo" in text_of(route("/product/shark-warrant-call", None))
     assert "Monte Carlo" in text_of(route("/product/bonus-certificate", None))
     assert "Find a product" in text_of(route("/finder", None))
     assert "Page not found" in text_of(route("/product/nothing", None))
@@ -199,7 +199,7 @@ def test_the_app_builds_with_every_piece():
     text = text_of(app.layout)
     for piece in ("market-panel", "vol-grid", "search", "market-button", "page"):
         assert piece in text
-    assert len(app.callback_map) == 17
+    assert len(app.callback_map) == 36
     assert isinstance(layout.not_found("/x"), html.Div)
 
 

@@ -10,15 +10,17 @@ from typing import Any
 import dash
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from dash import Input, Output, State, dcc, html
+from dash import ALL, Input, Output, State, dcc, html
 
-from web import layout, option_page, registry
+from web import coupon_page, layout, note_page, option_page, registry, risk_panel, ui
+from web.coupons import coupon_spec
 from web.market import (
     MATURITY,
     MarketData,
     default_data,
     market_from_data,
 )
+from web.notes import NotePosition
 
 TITLE = "Structured Products Pricer"
 
@@ -84,6 +86,22 @@ def panel_values(data: MarketData) -> tuple[float, float, float, list[dict[str, 
 def sync_panel(_: bool, data: MarketData) -> tuple[float, float, float, list[dict[str, Any]]]:
     """Fill the panel from the session market when it opens."""
     return panel_values(data)
+
+
+def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
+    """Headline numbers of the product page shown (option or note).
+
+    A coupon note shows its own, once priced by Monte Carlo.
+    """
+    product = registry.find((store or {}).get("slug", ""))
+    if product is not None and coupon_spec(product) is not None:
+        return dash.no_update
+    try:
+        item = risk_panel.resolve(store, data)
+    except ValueError as exc:
+        return ui.error(str(exc))
+    page = note_page if isinstance(item, NotePosition) else option_page
+    return page.kpis(store, data)
 
 
 def reset(_: int) -> tuple[Any, ...]:
@@ -156,7 +174,28 @@ def create_app() -> dash.Dash:
         Output("smile-graph", "figure"),
         Input("market-data", "data"),
     )(market_view)
+    # every product page: its terms, and one tab shown at a time
+    app.callback(
+        Output("product-store", "data"),
+        Input(ui.term(ALL), "value"),  # type: ignore[arg-type]
+        State(ui.term(ALL), "id"),  # type: ignore[arg-type]
+        Input({"type": "vol", "index": ALL}, "value"),
+        State("url", "pathname"),
+    )(ui.collect)
+    app.callback(
+        Output({"type": "tab-block", "tab": ALL}, "style"),
+        Input("product-tabs", "active_tab"),
+        State({"type": "tab-block", "tab": ALL}, "id"),
+    )(ui.show_tab)
+    app.callback(
+        Output("product-kpis", "children"),
+        Input("product-store", "data"),
+        Input("market-data", "data"),
+    )(kpis)
+    risk_panel.register(app)
     option_page.register(app)
+    note_page.register(app)
+    coupon_page.register(app)
     return app
 
 
@@ -170,4 +209,5 @@ if __name__ == "__main__":  # pragma: no cover - development server
     # reloader would otherwise take their first import for a code change and drop the request.
     market_view(default_data())
     route("/", None)
-    app.run(debug=True, port=8050)
+    # hot reload while developing, without Dash's debug menu on the page
+    app.run(debug=True, dev_tools_ui=False, port=8050)

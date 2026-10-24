@@ -11,6 +11,8 @@ from plotly.subplots import make_subplots
 from spricer._typing import FloatArray
 from spricer.bricks import BarrierOption, Underlying
 from spricer.monitoring import Monitoring
+from spricer.products.coupon_notes import CouponNote
+from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
 from web.options import Position, breakevens, leg_name
 
@@ -24,13 +26,13 @@ FONT = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
 
 
 def _style(fig: go.Figure, height: int, **layout: object) -> go.Figure:
+    base: dict[str, object] = {"margin": {"t": 50, "r": 10, "l": 10, "b": 10}}
     fig.update_layout(
         template="plotly_white",
         font={"family": FONT, "size": 13},
         height=height,
-        margin={"t": 50, "r": 10, "l": 10, "b": 10},
         hoverlabel={"font_family": FONT},
-        **layout,
+        **(base | layout),
     )
     return fig
 
@@ -242,34 +244,77 @@ def greeks_grid_figure(
             row=r,
             col=c,
         )
+    keys = [("At the money zone", ATM_COLOR, "square")]
+    if position.single:
+        keys += [
+            ("In the money", ZONE_COLORS["ITM"].replace("0.08", "0.4"), "square"),
+            ("Out of the money", ZONE_COLORS["OTM"].replace("0.07", "0.4"), "square"),
+        ]
+    keys.append(("Today's spot", SHORT_COLORS[0], "circle"))
+    for label, color, symbol in keys:  # legend only: what the shading and the dot mean
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name=label,
+                marker={"color": color, "size": 12, "symbol": symbol},
+            )
+        )
     fig.update_xaxes(title_text="Spot (% of today)", title_font={"size": 11})
-    return _style(fig, 270 * rows + 60, hovermode="x unified")
+    return _style(
+        fig,
+        270 * rows + 90,
+        hovermode="x unified",
+        legend={"orientation": "h", "y": 1.02, "yanchor": "bottom", "x": 0.0},
+        margin={"t": 80, "r": 10, "l": 10, "b": 10},
+    )
 
 
 def greek_time_figure(
-    maturities: FloatArray, curves: Mapping[str, FloatArray], greek: str
+    maturities: FloatArray,
+    curves: Mapping[str, FloatArray],
+    greek: str,
+    highlight: str | None = None,
 ) -> go.Figure:
-    """One Greek against the remaining maturity, in, at and out of the money."""
-    colors = (LONG_COLORS[0], PRIMARY, SHORT_COLORS[0])
+    """One Greek against the time left, at a few spot levels; ``highlight`` drawn thickest."""
+    colors = (LONG_COLORS[0], PRIMARY, SHORT_COLORS[0], GUIDE)
     fig = go.Figure()
     for (label, values), color in zip(curves.items(), colors, strict=False):
+        main = label == highlight
         fig.add_trace(
             go.Scatter(
                 x=maturities,
                 y=values,
                 name=label,
                 mode="lines",
-                line={"color": color, "width": 2.5},
+                line={
+                    "color": "black" if main else color,
+                    "width": 4 if main else 2,
+                    "dash": "solid" if main else "dash",
+                },
             )
         )
+        if main:
+            fig.add_trace(
+                go.Scatter(
+                    x=[maturities[0]],
+                    y=[values[0]],
+                    mode="markers+text",
+                    marker={"color": SHORT_COLORS[0], "size": 10},
+                    text=["now"],
+                    textposition="top center",
+                    showlegend=False,
+                    hovertemplate="today: %{y:.3f}<extra></extra>",
+                )
+            )
     return _style(
         fig,
-        420,
-        title=f"{greek} as expiry approaches",
-        xaxis_title="Time to maturity (years)",
+        440,
+        xaxis_title="Years to maturity (expiry on the right)",
         yaxis_title=greek,
         xaxis_autorange="reversed",
-        legend={"orientation": "h", "y": -0.22},
+        legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 0.0},
         hovermode="x unified",
     )
 
@@ -365,4 +410,228 @@ def scenario_heatmap_figure(
         title=f"Full revaluation after {days:g} days",
         xaxis_title="Spot move",
         yaxis_title="Volatility move",
+    )
+
+
+# --- Notes ---------------------------------------------------------------------------------------
+
+LEVEL_COLORS = ("#2ca02c", "#d62728", "#ff7f0e", "#9467bd", "#17becf")
+PAYOFF_LEVEL_COLORS = ("#8b0000", "#6a3d9a", "#b15928", "#1f78b4")
+
+
+def note_payoff_figure(note: Note, today_pct: float, *, underlying: bool = True) -> go.Figure:
+    """Payoff of a note at maturity against the final performance, with its named levels.
+
+    Vertical lines are levels of the underlying (strike, barrier, cap), horizontal lines levels
+    of the payoff (protection, bonus); the grey dotted line is the underlying itself.
+    """
+    top = max(200.0, 1.3 * max([today_pct, *(lv.value_pct for lv in note.levels)]))
+    perf = np.linspace(0.0, top, 2001)
+    payoff = np.asarray(note.payoff(perf))
+    low = min(0.0, float(np.min(payoff)))
+    y_top = 1.1 * max(float(np.max(payoff)), top)
+    fig = go.Figure()
+    if underlying:
+        fig.add_trace(
+            go.Scatter(
+                x=perf,
+                y=perf,
+                name="Underlying",
+                mode="lines",
+                line={"color": GUIDE, "dash": "dot", "width": 1.5},
+            )
+        )
+    else:  # a warrant pays a fraction of the notional: the underlying would flatten the chart
+        y_top = 1.15 * max(float(np.max(payoff)), 1.0)
+    vertical = horizontal = 0
+    for level in note.levels:
+        if level.kind is LevelKind.PERFORMANCE:
+            color = LEVEL_COLORS[vertical % len(LEVEL_COLORS)]
+            vertical += 1
+            x, y, dash = [level.value_pct] * 2, [low, y_top], "dash"
+        else:
+            color = PAYOFF_LEVEL_COLORS[horizontal % len(PAYOFF_LEVEL_COLORS)]
+            horizontal += 1
+            x, y, dash = [0.0, top], [level.value_pct] * 2, "dashdot"
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                name=f"{level.name} {level.value_pct:g}%",
+                mode="lines",
+                hoverinfo="skip",
+                line={"color": color, "dash": dash, "width": 1.5},
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=perf, y=payoff, name="Payoff", mode="lines", line={"color": PRIMARY, "width": 4}
+        )
+    )
+    fig.add_vline(
+        x=today_pct,
+        line={"dash": "dot", "color": "black", "width": 1},
+        annotation_text=f"today {today_pct:.1f}%",
+        annotation_position="top",
+    )
+    return _style(
+        fig,
+        480,
+        xaxis_title="Underlying at maturity (% of initial level)",
+        yaxis_title="Paid at maturity (% of notional)",
+        xaxis_range=[0.0, top],
+        yaxis_range=[low, y_top],
+        legend={"orientation": "h", "y": -0.18},
+        hovermode="x unified",
+    )
+
+
+def note_greeks_figure(
+    note: Note, perf_pct: FloatArray, profile: Mapping[str, FloatArray], today_pct: float
+) -> go.Figure:
+    """Price, delta, gamma and vega of a note against the underlying's level."""
+    names = tuple(profile)
+    fig = make_subplots(rows=2, cols=2, subplot_titles=names, horizontal_spacing=0.1)
+    today = int(np.argmin(np.abs(perf_pct - today_pct)))
+    levels = [lv.value_pct for lv in note.levels if lv.kind is LevelKind.PERFORMANCE]
+    for i, name in enumerate(names):
+        r, c = i // 2 + 1, i % 2 + 1
+        for level in levels:
+            fig.add_vline(
+                x=level,
+                line={"dash": "dash", "color": GUIDE, "width": 1},
+                row=r,
+                col=c,
+                exclude_empty_subplots=False,
+            )
+        fig.add_trace(
+            go.Scatter(
+                x=perf_pct,
+                y=profile[name],
+                mode="lines",
+                line={"color": PRIMARY, "width": 2.5},
+                showlegend=False,
+                name=name,
+            ),
+            row=r,
+            col=c,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[perf_pct[today]],
+                y=[float(profile[name][today])],
+                mode="markers",
+                marker={"color": SHORT_COLORS[0], "size": 9},
+                showlegend=False,
+                hovertemplate="today: %{y:.4f}<extra></extra>",
+            ),
+            row=r,
+            col=c,
+        )
+    fig.update_xaxes(title_text="Underlying (% of initial)", title_font={"size": 11})
+    return _style(fig, 600, hovermode="x unified")
+
+
+def coupon_payoff_figure(note: CouponNote, today_pct: float) -> go.Figure:
+    """Paid at maturity by a coupon note never called, against the worst performance.
+
+    With a barrier observed along the path the capital is at risk below the strike only if the
+    barrier was breached: the chart then shows both cases.
+    """
+    top = max(160.0, 1.25 * max([today_pct, *(lv.value_pct for lv in note.levels)]))
+    perf = np.linspace(0.0, top, 1601)
+    never = np.asarray(note.maturity_payoff(perf, False))
+    y_top = 1.1 * max(top, float(np.max(never)))
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=perf,
+            name="Underlying",
+            mode="lines",
+            line={"color": GUIDE, "dash": "dot", "width": 1.5},
+        )
+    )
+    for i, level in enumerate(note.levels):
+        fig.add_trace(
+            go.Scatter(
+                x=[level.value_pct] * 2,
+                y=[0.0, y_top],
+                name=f"{level.name} {level.value_pct:g}%",
+                mode="lines",
+                hoverinfo="skip",
+                line={"color": LEVEL_COLORS[i % len(LEVEL_COLORS)], "dash": "dash", "width": 1.5},
+            )
+        )
+    path_barrier = note.monitoring is not Monitoring.EUROPEAN and not note.barrier_breached
+    if path_barrier:
+        fig.add_trace(
+            go.Scatter(
+                x=perf,
+                y=note.maturity_payoff(perf, True),
+                name="Barrier breached during the life",
+                mode="lines",
+                line={"color": SHORT_COLORS[0], "width": 3, "dash": "dash"},
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=perf,
+            y=never,
+            name="Barrier never breached" if path_barrier else "Paid at maturity",
+            mode="lines",
+            line={"color": PRIMARY, "width": 4},
+        )
+    )
+    fig.add_vline(
+        x=today_pct,
+        line={"dash": "dot", "color": "black", "width": 1},
+        annotation_text=f"today {today_pct:.1f}%",
+        annotation_position="top",
+    )
+    return _style(
+        fig,
+        460,
+        title="If never called: paid at maturity",
+        xaxis_title="Worst performance at maturity (% of initial level)",
+        yaxis_title="Paid at maturity (% of notional)",
+        xaxis_range=[0.0, top],
+        yaxis_range=[0.0, y_top],
+        legend={"orientation": "h", "y": -0.2},
+        hovermode="x unified",
+    )
+
+
+def call_probability_figure(note: CouponNote, calls_pct: list[float]) -> go.Figure:
+    """Probability of a call at each date, of reaching maturity, and the cumulative line."""
+    labels = [f"{o.time:.2f}y" for o in note.observations]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(x=labels, y=calls_pct, name="Called at this date", marker_color=LONG_COLORS[1])
+    )
+    fig.add_trace(
+        go.Bar(
+            x=[f"{note.maturity:.2f}y (maturity)"],
+            y=[100.0 - sum(calls_pct)],
+            name="Reaches maturity",
+            marker_color=SHORT_COLORS[1],
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=labels,
+            y=np.cumsum(calls_pct),
+            name="Called by this date",
+            mode="lines+markers",
+            line={"color": PRIMARY, "width": 2},
+        )
+    )
+    return _style(
+        fig,
+        420,
+        title="When does the note end?",
+        xaxis_title="Observation date (years from today)",
+        yaxis_title="Probability (%)",
+        yaxis_range=[0.0, 100.0],
+        legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 1.0, "xanchor": "right"},
     )

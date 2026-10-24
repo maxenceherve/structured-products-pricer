@@ -37,7 +37,15 @@ MONITORING = {
     "daily": Monitoring.DISCRETE,
     "continuous": Monitoring.CONTINUOUS,
 }
-MONITORING_LABELS = {"european": "At maturity", "daily": "Daily", "continuous": "Continuously"}
+MONITORING_LABELS = {
+    "european": "European",
+    "continuous": "American (continuous)",
+    "daily": "Discrete (daily closes)",
+}
+MONITORING_HELP = (
+    "European: the barrier is looked at on the final date only. American: at every moment of "
+    "the life. Discrete: at each daily close."
+)
 GREEKS = ("Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)")
 
 _EXPLAIN_FAMILY = {

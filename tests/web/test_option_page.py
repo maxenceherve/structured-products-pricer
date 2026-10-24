@@ -13,9 +13,10 @@ from spricer.market import FlatVol, Market
 from spricer.monitoring import Monitoring
 from spricer.risk import Shock, explain
 from web import explain as ex
-from web import figures, registry
+from web import figures, registry, risk_panel, ui
 from web import option_page as page
 from web.market import default_data, market_from_data
+from web.notes import CATALOG, default_terms
 from web.options import (
     OptionSetup,
     breakevens,
@@ -184,7 +185,7 @@ def test_breakevens():
 
 def test_collect_reads_the_terms_and_the_product():
     ids = [{"type": "term", "key": "side"}, {"type": "term", "key": "maturity"}]
-    out = page.collect(["Short", 2.0], ids, [None], "/product/call/")
+    out = ui.collect(["Short", 2.0], ids, [None], "/product/call/")
     assert out == {"slug": "call", "terms": {"side": "Short", "maturity": 2.0}, "vols": [None]}
 
 
@@ -205,7 +206,12 @@ def test_kpis():
     assert "paid" in text
     assert "received" in text_of(page.kpis(store("call", side="Short"), default_data()))
     assert "Set the terms" in text_of(page.kpis(None, default_data()))
-    assert "no option to price" in text_of(page.kpis(store("call") | {"slug": "x"}, default_data()))
+    assert "no product to price" in text_of(
+        page.kpis(store("call") | {"slug": "x"}, default_data())
+    )
+    terms = default_terms(CATALOG["Bonus certificate"])
+    note = {"slug": "bonus-certificate", "terms": terms, "vols": []}
+    assert "no option to price" in text_of(page.kpis(note, default_data()))
     bad = text_of(page.kpis(store("call"), default_data() | {"spot": None}))
     assert "market data are invalid" in bad
     crossed = text_of(page.kpis(store("down-and-out-call", barrier=120.0), default_data()))
@@ -214,9 +220,11 @@ def test_kpis():
 
 
 def test_tabs_and_risk_views_show_one_block():
-    styles = page.show_tab("greeks")
-    assert [s["display"] for s in styles] == ["none", "none", "block", "none"]
-    assert [s["display"] for s in page.risk_blocks("P&L explain")] == ["none", "none", "block"]
+    tabs = [{"type": "tab-block", "tab": t} for t in ("payoff", "decomposition", "greeks")]
+    assert [s["display"] for s in ui.show_tab("greeks", tabs)] == ["none", "none", "block"]
+    views = [{"type": "risk-block", "view": v} for v in risk_panel.RISK_VIEWS_FULL]
+    styles = risk_panel.risk_blocks(risk_panel.PNL, views)
+    assert [s["display"] for s in styles] == ["none", "none", "block"]
 
 
 def test_payoff_tab():
@@ -276,21 +284,24 @@ def test_greeks_tab_views():
         store("call"), data, page.GREEK_VIEWS[0], "Gamma (%)", "greeks"
     )
     assert "Delta" in text_of(reading)
-    assert len(fig.data) == 12  # six Greeks, each a curve and today's dot
+    # six Greeks, each a curve and today's dot; the legend: ATM zone, ITM, OTM, today
+    assert len(fig.data) == 12 + 4
     assert picker["display"] == "none"
-    assert "Blue band" in caption
+    assert "at-the-money zone" in caption
     reading, fig, _, _ = page.greeks_view(store("put"), data, page.GREEK_VIEWS[2], None, "greeks")
     assert "Vanna" in text_of(reading)
-    assert len(fig.data) == 8
-    _, fig, caption, picker = page.greeks_view(
+    assert "how your first-order Greeks move" in text_of(reading)
+    assert len(fig.data) == 8 + 4
+    box, fig, caption, picker = page.greeks_view(
         store("put"), data, page.GREEK_VIEWS[1], "Vega (%)", "greeks"
     )
     assert picker["display"] == "block"
-    assert len(fig.data) == 3
-    assert "Vega" in fig.layout.title.text
-    assert "expiry" in caption
-    _, fig, _, _ = page.greeks_view(store("call"), data, page.GREEK_VIEWS[1], "?", "greeks")
-    assert "Gamma" in fig.layout.title.text
+    assert len(fig.data) == 3 + 1  # in, at (= today) and out of the money, and the "now" dot
+    assert fig.layout.yaxis.title.text == "Vega (%)"
+    assert "expiry" in text_of(box)
+    assert caption == ""
+    box, fig, _, _ = page.greeks_view(store("call"), data, page.GREEK_VIEWS[1], "?", "greeks")
+    assert fig.layout.yaxis.title.text == "Delta (%)"  # the default Greek
     reading, *_ = page.greeks_view(None, data, page.GREEK_VIEWS[0], None, "greeks")
     assert "Set the terms" in text_of(reading)
     # a short-dated position has no quarter-time gamma comparison
@@ -299,6 +310,20 @@ def test_greeks_tab_views():
         store("bull-call-spread"), data, page.GREEK_VIEWS[0], None, "greeks"
     )
     assert len(fig.layout.shapes) == 6 * 4  # per Greek: two ATM bands, two strike lines
+
+
+def test_the_time_view_starts_at_today_s_greek():
+    """The curve at today's spot starts at the Greek shown in the headline (a strangle)."""
+    data = default_data()
+    s = store("strangle")
+    pos = position("strangle")
+    box, fig, _, _ = page.greeks_view(s, data, page.GREEK_VIEWS[1], "Delta (%)", "greeks")
+    today = next(t for t in fig.data if t.name == page.TODAY)
+    assert today.y[0] == pytest.approx(display_greeks(pos.strategy, MARKET)["Delta (%)"])
+    assert "15 % lower or higher" in text_of(box)
+    assert [label for label, _ in page.time_spots(position("call", strike_0=110.0))][
+        -1
+    ] == page.TODAY
 
 
 @pytest.mark.parametrize(
@@ -321,13 +346,13 @@ def test_first_order_reading_cases(slug, terms, phrase):
 HEDGE_ARGS = ("call", 100.0, 0.25, "put", 100.0, 2.0)
 
 
-@pytest.mark.parametrize("target", page.HEDGES)
+@pytest.mark.parametrize("target", risk_panel.HEDGES)
 def test_static_hedges_neutralise_their_greeks(target):
-    out, row1, row2 = page.static_view(
+    out, row1, row2 = risk_panel.static_view(
         store("call", side="Short"),
         default_data(),
         "risk-hedging",
-        page.RISK_VIEWS[0],
+        risk_panel.STATIC,
         10_000,
         target,
         *HEDGE_ARGS,
@@ -335,19 +360,21 @@ def test_static_hedges_neutralise_their_greeks(target):
     text = text_of(out)
     assert "market maker" in text
     assert "shares" in text
-    needed = page.HEDGES.index(target)
+    needed = risk_panel.HEDGES.index(target)
     assert row1["display"] == ("block" if needed >= 1 else "none")
     assert row2["display"] == ("block" if needed == 2 else "none")
 
 
 def test_static_hedge_readings_follow_the_buyer_s_gamma():
-    data, view = default_data(), page.RISK_VIEWS[0]
+    data, view = default_data(), risk_panel.STATIC
     long_call = text_of(
-        page.static_view(store("call"), data, "risk-hedging", view, 100, "Delta", *HEDGE_ARGS)[0]
+        risk_panel.static_view(
+            store("call"), data, "risk-hedging", view, 100, "Delta", *HEDGE_ARGS
+        )[0]
     )
     assert "gamma scalping" in long_call
     spread = text_of(
-        page.static_view(
+        risk_panel.static_view(
             store("bull-call-spread"), data, "risk-hedging", view, 100, "Delta", *HEDGE_ARGS
         )[0]
     )
@@ -355,18 +382,18 @@ def test_static_hedge_readings_follow_the_buyer_s_gamma():
 
 
 def test_static_hedge_errors_and_hidden_tab():
-    data, view = default_data(), page.RISK_VIEWS[0]
-    hidden = page.static_view(store("call"), data, "payoff", view, 1, "Delta", *HEDGE_ARGS)
+    data, view = default_data(), risk_panel.STATIC
+    hidden = risk_panel.static_view(store("call"), data, "payoff", view, 1, "Delta", *HEDGE_ARGS)
     assert hidden[0] is dash.no_update
-    bad = page.static_view(store("call"), data, "risk-hedging", view, 0, "Delta", *HEDGE_ARGS)
-    assert "at least 1" in text_of(bad[0])
-    no_strike = page.static_view(
+    bad = risk_panel.static_view(store("call"), data, "risk-hedging", view, 0, "Delta", *HEDGE_ARGS)
+    assert "must be positive" in text_of(bad[0])
+    no_strike = risk_panel.static_view(
         store("call"),
         data,
         "risk-hedging",
         view,
         1,
-        page.HEDGES[1],
+        risk_panel.HEDGES[1],
         "call",
         None,
         0.25,
@@ -375,11 +402,24 @@ def test_static_hedge_errors_and_hidden_tab():
         1,
     )
     assert "positive strike" in text_of(no_strike[0])
-    same = page.static_view(
-        store("call"), data, "risk-hedging", view, 1, page.HEDGES[2], "call", 100, 1, "call", 100, 1
+    same = risk_panel.static_view(
+        store("call"),
+        data,
+        "risk-hedging",
+        view,
+        1,
+        risk_panel.HEDGES[2],
+        "call",
+        100,
+        1,
+        "call",
+        100,
+        1,
     )
     assert "proportional" in text_of(same[0])
-    unknown = page.static_view(store("call"), data, "risk-hedging", view, 1, None, *HEDGE_ARGS)
+    unknown = risk_panel.static_view(
+        store("call"), data, "risk-hedging", view, 1, None, *HEDGE_ARGS
+    )
     assert unknown[1]["display"] == "none"
 
 
@@ -420,16 +460,16 @@ def test_simulated_mean_is_the_theory_within_its_error():
 
 
 def test_pnl_explain_tab():
-    data, view = default_data(), page.RISK_VIEWS[2]
-    assert page.pnl_view(store("call"), data, "payoff", view, -10, 2, 7, 0) is dash.no_update
-    text = text_of(page.pnl_view(store("call"), data, "risk-hedging", view, -10, 2, 7, 0))
+    data, view = default_data(), risk_panel.PNL
+    assert risk_panel.pnl_view(store("call"), data, "payoff", view, -10, 2, 7, 0) is dash.no_update
+    text = text_of(risk_panel.pnl_view(store("call"), data, "risk-hedging", view, -10, 2, 7, 0))
     assert "Full revaluation" in text
     assert "Stress test" in text
     empty = text_of(
-        page.pnl_view(store("call"), data, "risk-hedging", view, None, None, None, None)
+        risk_panel.pnl_view(store("call"), data, "risk-hedging", view, None, None, None, None)
     )
     assert "Taylor total" in empty
-    late = text_of(page.pnl_view(store("call"), data, "risk-hedging", view, 0, 0, 400, 0))
+    late = text_of(risk_panel.pnl_view(store("call"), data, "risk-hedging", view, 0, 0, 400, 0))
     assert "before maturity" in late
 
 
@@ -478,14 +518,14 @@ def test_first_order_readings_cover_every_family():
                 | second_order_at(pos.instrument, pos.market, 1.0)
             ).items()
         }
-        assert ex.first_order(pos.situation, now, page.SPOTS_PCT, profile, None)
+        cards, _ = ex.first_order(pos.situation, now, page.SPOTS_PCT, profile, None)
+        assert [c.title for c in cards] == ["Delta", "Gamma", "Vega", "Theta"]
     dead = {
         k: 0.0 for k in ("Price (%)", "Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)")
     }
-    assert (
-        "worth nothing"
-        in ex.first_order(position("call").situation, dead, page.SPOTS_PCT, {}, None)[0]
-    )
+    cards, notes = ex.first_order(position("call").situation, dead, page.SPOTS_PCT, {}, None)
+    assert cards == []
+    assert "worth nothing" in notes[0]
 
 
 def test_european_barrier_payoff_has_no_two_scenarios():
@@ -493,3 +533,22 @@ def test_european_barrier_payoff_has_no_two_scenarios():
     assert pos.strategy.legs[0].brick.monitoring is Monitoring.EUROPEAN
     fig, _ = figures.payoff_figure(pos, net_of_premium=False)
     assert fig.data[0].name == "Payoff at maturity"
+
+
+@pytest.mark.parametrize(
+    ("slug", "terms", "phrases"),
+    [
+        ("bull-call-spread", {}, ["Breakeven at 104.6 %", "most you can lose", "Legs"]),
+        ("covered-call", {"side": "Short"}, ["Short options", "Delta one"]),
+        ("up-and-out-call", {}, ["American (continuous)", "Paid if the barrier was never touched"]),
+        ("up-and-out-call", {"monitoring": "european"}, ["European (at maturity)"]),
+        ("digital-call", {"maturity": 1.0}, ["Breakeven at"]),
+    ],
+)
+def test_option_sheets(slug, terms, phrases):
+    out = page.download_sheet(1, store(slug, **terms), default_data())
+    assert out["filename"].endswith("-product-sheet.html")
+    for phrase in phrases:
+        assert phrase in out["content"], phrase
+    assert page.download_sheet(1, None, default_data()) is dash.no_update
+    assert ">1 year<" in out["content"]

@@ -13,19 +13,14 @@ from dash import dcc, html
 
 from spricer.market import InterpolatedVolSurface, Market
 from web import registry
+from web.coupon_page import coupon_page
 from web.market import MATURITY, MarketData, strike_field
+from web.note_page import note_page
+from web.notes import note_spec
 from web.option_page import option_page
 from web.options import setup_of
 from web.registry import Product
 from web.thumbnails import payoff_data_uri
-
-STRUCTURED = (
-    registry.CAPITAL_PROTECTION,
-    registry.CERTIFICATES,
-    registry.YIELD,
-    registry.AUTOCALLS,
-)
-
 
 # --- Top bar and market panel ------------------------------------------------------------------
 
@@ -206,6 +201,20 @@ def gallery(query: str | None = None) -> html.Div:
     sections: list[Any] = []
     if not query:
         sections.append(
+            html.Div(
+                [
+                    html.H1("Structured Products Pricer", className="hero-title"),
+                    html.P(
+                        "Price options and structured products on your own volatility smile: "
+                        "payoff, Greeks and what they mean, hedging, Monte Carlo checks and "
+                        "product sheets. Pick a product below, or describe what you need.",
+                        className="hero-text",
+                    ),
+                ],
+                className="hero",
+            )
+        )
+        sections.append(
             dbc.Alert(
                 [
                     html.Strong("Not sure where to start? "),
@@ -244,42 +253,9 @@ def product_page(product: Product) -> html.Div:
     """Product page: terms on the left, results in tabs on the right."""
     if setup_of(product) is not None:
         return option_page(product)
-    tabs = ["Payoff", "Decomposition", "Greeks", "Risk & hedging"]
-    if product.family in STRUCTURED:
-        tabs += ["Monte Carlo", "Solve for"]
-    return html.Div(
-        [
-            dbc.Breadcrumb(
-                items=[
-                    {"label": "Home", "href": "/"},
-                    {"label": product.family, "href": f"/#{registry.slugify(product.family)}"},
-                    {"label": product.name, "active": True},
-                ]
-            ),
-            html.H1(product.name, className="product-title"),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Card(
-                            dbc.CardBody([html.H5("Terms"), html.Div(id="product-terms")]),
-                            className="terms-card",
-                        ),
-                        lg=4,
-                        className="mb-4",
-                    ),
-                    dbc.Col(
-                        dbc.Tabs(
-                            [dbc.Tab(label=t, tab_id=registry.slugify(t)) for t in tabs],
-                            id="product-tabs",
-                            active_tab="payoff",
-                        ),
-                        lg=8,
-                    ),
-                ]
-            ),
-        ],
-        className="product-page",
-    )
+    if note_spec(product) is not None:
+        return note_page(product)
+    return coupon_page(product)
 
 
 def finder_page() -> html.Div:
