@@ -1,7 +1,5 @@
 import itertools
-import sys
 from collections.abc import Callable, Sequence
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,11 +10,6 @@ from spricer.market import InterpolatedVolSurface, Market
 from spricer.market.defaults import default_market
 
 Payoff = Callable[[FloatArray], FloatArray]
-
-# Streamlit runs the app with its folder on sys.path; the app tests import its modules the same way.
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
 
 
 @pytest.fixture

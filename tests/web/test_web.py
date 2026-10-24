@@ -48,6 +48,7 @@ def test_every_product_of_the_library_is_in_the_gallery_once():
     for name in expected:
         assert names.count(name) == 1, name
     assert len({p.slug for p in registry.PRODUCTS}) == len(registry.PRODUCTS)
+    assert len(registry.PRODUCTS) == 56  # the count given in the README
     assert sum(p.family == registry.BARRIERS for p in registry.PRODUCTS) == 10
     assert sum(p.family == registry.CERTIFICATES for p in registry.PRODUCTS) == 8
     assert {p.family for p in registry.PRODUCTS} == set(registry.FAMILIES)
@@ -199,7 +200,7 @@ def test_the_app_builds_with_every_piece():
     text = text_of(app.layout)
     for piece in ("market-panel", "vol-grid", "search", "market-button", "page"):
         assert piece in text
-    assert len(app.callback_map) == 36
+    assert len(app.callback_map) == 37
     assert isinstance(layout.not_found("/x"), html.Div)
 
 

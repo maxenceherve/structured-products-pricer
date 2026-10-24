@@ -26,7 +26,6 @@ Thumbs.db
 
 # Secrets and local agent configuration
 .env
-.streamlit/secrets.toml
 .claude/
 
 # Data files are never committed: every market input is synthetic and lives in code.

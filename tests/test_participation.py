@@ -23,6 +23,23 @@ VARIANTS: list[tuple[NoteSpec, dict[str, float]]] = [(spec, {}) for spec in SPEC
     (pc.find_certificate("Outperformance certificate"), {"participation": 100.0}),
     (pc.find_certificate("Reverse bonus certificate"), {"capped": 1.0}),
     (pc.find_certificate("Sprint certificate"), {"participation": 100.0}),
+    # every degree of freedom: strikes, participations, caps
+    (pc.find_certificate("Outperformance certificate"), {"strike": 105.0, "capped": 1.0}),
+    (
+        pc.find_certificate("Barrier outperformance certificate"),
+        {"strike": 90.0, "capped": 1.0, "cap": 125.0},
+    ),
+    (pc.find_certificate("Bonus certificate"), {"participation": 150.0}),
+    (
+        pc.find_certificate("Bonus certificate"),
+        {"participation": 80.0, "strike": 105.0, "capped": 1.0, "cap": 160.0},
+    ),
+    (pc.find_certificate("Bonus certificate"), {"bonus": 105.0, "strike": 110.0}),
+    (pc.find_certificate("Twin-win certificate"), {"strike": 95.0, "capped": 1.0}),
+    (pc.find_certificate("Airbag certificate"), {"strike": 105.0, "capped": 1.0}),
+    (pc.find_certificate("Buffer certificate"), {"strike": 95.0}),
+    (pc.find_certificate("Sprint certificate"), {"strike": 105.0}),
+    (pc.find_certificate("Reverse bonus certificate"), {"participation": 150.0, "capped": 1.0}),
 ]
 IDS = [f"{spec.name}{'-' + '-'.join(v) if v else ''}" for spec, v in VARIANTS]
 
@@ -94,6 +111,23 @@ def test_shapes_at_key_levels():
     assert at("Discount certificate", {}, 80.0, 120.0) == [80.0, 105.0]
     assert at("Shark warrant (call)", {}, 90.0, 120.0, 130.0) == [0.0, 20.0, 5.0]
     assert at("Shark warrant (put)", {}, 69.0, 80.0, 110.0) == [5.0, 20.0, 0.0]
+    # the extra terms: strike, participation, cap
+    capped = {"strike": 110.0, "capped": 1.0, "cap": 130.0}
+    assert at("Outperformance certificate", capped, 100.0, 120.0, 150.0) == pytest.approx(
+        [100.0, 125.0, 140.0]
+    )
+    # bonus 115 % with 150 % above 100 %: the upside reaches the bonus at 110 %
+    geared = {"participation": 150.0}
+    assert at("Bonus certificate", geared, 69.0, 105.0, 120.0) == pytest.approx(
+        [69.0, 115.0, 130.0]
+    )
+    assert at("Twin-win certificate", {"strike": 95.0}, 80.0, 105.0) == pytest.approx(
+        [110.0, 105.0]
+    )
+    assert at("Airbag certificate", {"strike": 105.0}, 110.0) == pytest.approx([105.0])
+    assert at("Reverse bonus certificate", {"participation": 150.0}, 100.0, 125.0) == pytest.approx(
+        [150.0, 115.0]
+    )
 
 
 def test_the_barrier_can_be_observed_along_the_path():
@@ -131,7 +165,11 @@ def test_airbag_and_buffer_are_european():
         ("Barrier outperformance certificate", {"barrier": 100.0}, "below the initial"),
         ("Bonus certificate", {"bonus": 60.0}, "below the bonus"),
         ("Bonus certificate", {"capped": 1.0, "cap": 110.0}, "cap"),
-        ("Twin-win certificate", {"barrier": 105.0}, "below the initial"),
+        ("Twin-win certificate", {"barrier": 105.0}, "below the strike"),
+        ("Outperformance certificate", {"capped": 1.0, "cap": 100.0}, "above the strike"),
+        ("Bonus certificate", {"participation": 50.0, "capped": 1.0, "cap": 125.0}, "reaches"),
+        ("Bonus certificate", {"strike": 0.0}, "strike"),
+        ("Reverse bonus certificate", {"participation": 50.0}, "participation x reverse"),
         ("Twin-win certificate", {"participation_down": -1.0}, "participation_down"),
         ("Airbag certificate", {"airbag": 100.0}, "airbag level"),
         ("Airbag certificate", {"capped": 1.0, "cap": 100.0}, "cap"),

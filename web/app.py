@@ -12,7 +12,7 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import ALL, Input, Output, State, dcc, html
 
-from web import coupon_page, layout, note_page, option_page, registry, risk_panel, ui
+from web import coupon_page, finder_page, layout, note_page, option_page, registry, risk_panel, ui
 from web.coupons import coupon_spec
 from web.market import (
     MATURITY,
@@ -36,7 +36,7 @@ def route(pathname: str | None, query: str | None) -> Any:
     if path == "/":
         return layout.gallery()
     if path == "/finder":
-        return layout.finder_page()
+        return finder_page.finder_page()
     if path.startswith("/product/"):
         product = registry.find(path.removeprefix("/product/"))
         if product is not None:
@@ -196,6 +196,7 @@ def create_app() -> dash.Dash:
     option_page.register(app)
     note_page.register(app)
     coupon_page.register(app)
+    finder_page.register(app)
     return app
 
 

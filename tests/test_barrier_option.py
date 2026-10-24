@@ -80,3 +80,13 @@ def test_only_a_european_barrier_option_replicates_with_vanillas():
     assert (
         BarrierOption("put", "down-and-in", 100.0, 70.0, T).label == "Put down-and-in K=100 H=70 1y"
     )
+
+
+def test_a_european_barrier_option_carries_the_skew_of_its_digital(market):
+    from spricer.bricks import BarrierOption
+    from spricer.monitoring import Monitoring
+
+    option = BarrierOption("call", "up-and-out", 100.0, 130.0, 1.0, Monitoring.EUROPEAN)
+    assert float(option.skew_adjustment(market)) != 0.0
+    path = BarrierOption("call", "up-and-out", 100.0, 130.0, 1.0, Monitoring.CONTINUOUS)
+    assert float(path.skew_adjustment(market)) == 0.0

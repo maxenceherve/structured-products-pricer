@@ -5,10 +5,10 @@
 ![Coverage](https://img.shields.io/badge/coverage-100%25-1a9850)
 ![License](https://img.shields.io/badge/license-MIT-7f7f7f)
 
-Price, decompose, explain and hedge vanilla option strategies and structured products, with an
-interactive Streamlit app. Written from the textbook formulas (Hull, Wilmott, Haug, Glasserman,
-Gatheral), and checked against closed forms, QuantLib and Monte Carlo — every Monte Carlo number
-comes with its standard error.
+Price, decompose, explain and hedge option strategies and structured products, in a web app
+built with Dash. Written from the textbook formulas (Hull, Wilmott, Haug, Glasserman, Gatheral),
+and checked against closed forms, QuantLib and Monte Carlo — every Monte Carlo number comes
+with its standard error.
 
 > Educational project. Market data are synthetic or typed by the user. Nothing here is
 > investment advice.
@@ -17,15 +17,26 @@ comes with its standard error.
 
 ## What you can do
 
-| Page | What it does |
-|---|---|
-| **Product finder** (home) | Describe your view, horizon, protection and objective: the products of the app are ranked against your answers, every point explained, with equivalent constructions of the payoff (buy a call spread or sell a put spread: same payoff and Greeks, different cash and collateral). |
-| **Vanilla options** | 24 strategies by family (spreads, volatility plays, butterflies, digitals...), payoff with every leg, price and Greeks brick by brick. |
-| **Greeks lab** | Move the strike, the maturity and the volatility: price and Greeks against the spot with the in/at/out-of-the-money zones, against time, second order (vanna, volga, charm, speed), with explanations computed from the numbers. |
-| **Hedging** | Delta, delta-gamma and delta-gamma-vega hedges; a delta-hedging simulator (realised against implied volatility, rebalancing frequency, costs); a P&L explain: Taylor at the starting point, full revaluation, residual, exact step-by-step attribution and a spot × volatility stress matrix. |
-| **Capital protection** | Participation, shark, bonus, twin-win and digital coupon notes priced exactly by bricks read on the smile, a Monte Carlo check, and a solver (which participation makes the note worth 98 %?). |
-| **Yield enhancement / Autocallables** | Reverse convertibles, barrier reverse convertibles, Athena and Phoenix autocalls, on one underlying or a worst-of; notes already alive; Monte Carlo price, legs, call probabilities, Greeks per underlying, solver, downloadable product sheet. |
-| **Volatility surface** | Edit the implied volatility grid; smile, implied density and no-arbitrage checks. |
+The home page shows 56 products by family, each with the shape of its payoff; a search box
+and a product finder lead to them. The gear at the top right opens the market: spot, rates,
+dividends and the implied volatility grid, with its smile and no-arbitrage checks, shared by
+every page.
+
+| Family | Products | On their page |
+|---|---|---|
+| **Options & strategies** | calls, puts, spreads, straddles, strangles, butterflies, condors, collars, digitals… | payoff and P&L with breakevens; legs priced on the smile (with the skew of the digitals); Greeks against the spot, against time and of second order, each explained in plain words; static hedges, a delta-hedging simulator and a P&L explain |
+| **Barrier options** | the eight knock-in and knock-out options, shark warrants | the same, with the barrier observed European, American or discrete |
+| **Capital protection** | participation, bearish, shark, bonus, twin-win and digital coupon notes | priced exactly by bricks read on the smile; Greeks; the issuer's hedge; a Monte Carlo check under local volatility; a solver (which participation prices the note at 98 %?) |
+| **Participation certificates** | outperformance, barrier outperformance, bonus, twin-win, airbag, buffer, sprint, reverse bonus | the same, every term free: participation, strike, barrier, optional cap |
+| **Yield enhancement / Autocallables** | discount certificate, reverse convertibles, barrier reverse convertibles, their autocallable versions, Athena and Phoenix | Monte Carlo under local volatility, on one underlying or a worst-of with its correlation matrix; legs on common paths; call probabilities; Greeks per underlying with their errors and the issuer's hedge; notes already alive; solver |
+
+Every product has a printable product sheet: payoff chart, what is paid and the P&L at
+maturity with the breakevens, terms, Greeks, decomposition and main risks.
+
+The **product finder** asks for a market view, a volatility view, a horizon, the protection
+wanted and the kind of return, ranks every product with transparent rules (each point
+explained), and shows equivalent constructions of the same payoff: buying a call spread or
+selling a put spread gives the same payoff and Greeks, but not the same cash and collateral.
 
 ## Results, and where they come from
 
@@ -43,7 +54,8 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 | Delta-hedged call, realised 25 % against implied 20 % | mean P&L 1.930 ± 0.010 against a Black-Scholes price gap of 1.935 | notebook 03 |
 | Hedging noise at equal volatilities | standard deviation 0.424 (daily) and 0.930 (weekly), Derman-Kamal 0.432 and 0.952 | notebook 03 |
 | Taylor P&L explain | residual third order (log-log slope 3.22), step-by-step attribution exact | notebook 03, `tests/test_risk_hedging.py` |
-| Quality | 959 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
+| Every certificate and note is replicated by its bricks, and worth its expected payoff under the smile's density | payoff gap below 1e-9, value gap below 1e-6 relative | `tests/test_capital_protection.py`, `tests/test_participation.py` |
+| Quality | 1230 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
 
 | | |
 |---|---|
@@ -53,10 +65,11 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 
 ## Design choices
 
-- **Bricks read on the smile.** Every product that can be replicated is: zero-coupons, vanillas
-  at the volatility of their own strike, digitals with the skew term `−vega · dσ/dK` (a digital
-  is the limit of a tight call spread on the same surface). Levels are in % of the initial
-  level and converted once to absolute strikes, so the smile is read at the true moneyness.
+- **Bricks read on the smile.** Every product that can be replicated is: zero-coupons, the
+  underlying, vanillas at the volatility of their own strike, digitals with the skew term
+  `−vega · dσ/dK` (a digital is the limit of a tight call spread on the same surface), barrier
+  options. Levels are in % of the initial level and converted once to absolute strikes, so the
+  smile is read at the true moneyness.
 - **Volatility surface.** Natural cubic spline of the total variance in forward log-moneyness,
   wings bounded by Lee's moment formula and joined in C², linear in total variance across
   maturities; butterfly (Durrleman) and calendar checks; sticky strike.
@@ -69,10 +82,13 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
   issue price only measures the margin.
 - **Decomposition on common paths.** The legs of a Monte Carlo product (coupons, redemptions,
   the down-and-in put sold) are valued on the same paths and add up to the price exactly.
-- **Greeks.** Closed forms or finite differences of closed forms; for Monte Carlo prices, bump
+- **Greeks.** In % of notional, gamma in the "1 % gamma" convention (the change of delta for a
+  1 % move). Closed forms or finite differences of closed forms; for Monte Carlo prices, bump
   and revalue on common random numbers, underlying by underlying, each Greek with its error.
 - **P&L explain.** Taylor expansion at the starting point, never at the arrival; the residual
   is always shown; stress tests are full revaluations.
+- **Web app.** Every callback calls a pure function, tested without a browser; a tab is
+  computed only when it is shown; the market lives in the browser session.
 
 ## Layout
 
@@ -81,8 +97,8 @@ src/spricer/
   analytic/       Black-Scholes, barrier closed forms (Reiner-Rubinstein, BGK)
   market/         market, volatility surfaces, baskets, synthetic defaults
   bricks.py       zero-coupon, underlying, vanilla, digital, barrier, one-touch
-  strategies.py   vanilla strategies by family
-  products/       capital protected notes, coupon notes (RC, BRC, Athena, Phoenix)
+  strategies.py   option strategies by family
+  products/       capital protected notes, certificates and warrants, coupon notes
   mc/             paths, local volatility, correlation, products, Greeks
   greeks_lab.py   Greeks against spot and time, second order
   risk.py         P&L explain and stress matrix
@@ -90,9 +106,9 @@ src/spricer/
   solve.py        solve for a term at a target price
   finder.py       product finder
   packaging.py    equivalent constructions
-app/              Streamlit pages
+web/              Dash app: gallery, product pages, finder, product sheets
 notebooks/        validation, model risk, Greeks and hedging (with outputs)
-tests/            959 tests
+tests/            1230 tests
 ```
 
 ## Install and run
@@ -103,10 +119,15 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/maxenceherve/structured-products-pricer.git
 cd structured-products-pricer
 uv sync --all-extras
-uv run streamlit run app/streamlit_app.py
+uv run python -m web.app
 ```
 
-The new web app (Dash, in progress): `uv run python -m web.app`, then open http://localhost:8050.
+Then open http://localhost:8050. To serve it with gunicorn, or in Docker:
+
+```bash
+uv run gunicorn web.app:server --bind 0.0.0.0:8050
+docker build -t spricer-web . && docker run -p 8050:8050 spricer-web
+```
 
 Checks, and the notebooks (rewritten and executed, figures saved to `docs/figures/`):
 
@@ -121,6 +142,8 @@ uv run python scripts/build_notebooks.py
 
 - Local volatility reprices every European option but not the dynamics of the forward skew, to
   which autocallables are sensitive; a stochastic volatility model would be the next step.
+- Closed forms of barriers observed along the path read one volatility per strike; the Monte
+  Carlo tab of each note measures the smile's effect on the barrier.
 - Dividends are a continuous yield; cash dividends would need an affine model.
 - The local volatility differentiates the smile twice: quotes rounded to 0.1 volatility point
   on closely spaced long-dated strikes create spikes, hence the 0.01-point default grid.

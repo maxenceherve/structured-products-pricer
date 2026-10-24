@@ -258,19 +258,6 @@ def product_page(product: Product) -> html.Div:
     return coupon_page(product)
 
 
-def finder_page() -> html.Div:
-    """Placeholder of the product finder."""
-    return html.Div(
-        [
-            dbc.Breadcrumb(
-                items=[{"label": "Home", "href": "/"}, {"label": "Find a product", "active": True}]
-            ),
-            html.H1("Find a product", className="product-title"),
-            html.P("Coming in the next step.", className="text-muted"),
-        ]
-    )
-
-
 def not_found(path: str) -> html.Div:
     """Unknown address."""
     return html.Div(

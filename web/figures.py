@@ -9,12 +9,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from spricer._typing import FloatArray
-from spricer.bricks import BarrierOption, Underlying
+from spricer.bricks import BarrierOption
 from spricer.monitoring import Monitoring
+from spricer.packaging import Equivalence
 from spricer.products.coupon_notes import CouponNote
 from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
-from web.options import Position, breakevens, leg_name
+from web.options import Position, breakevens
 
 PRIMARY = "#1f4e79"
 GUIDE = "#7f7f7f"
@@ -35,20 +36,6 @@ def _style(fig: go.Figure, height: int, **layout: object) -> go.Figure:
         **(base | layout),
     )
     return fig
-
-
-def leg_colors(strategy: Strategy) -> list[str]:
-    """Greens and blues for long legs, reds and oranges for short legs."""
-    longs = shorts = 0
-    colors = []
-    for leg in strategy.legs:
-        if leg.quantity >= 0:
-            colors.append(LONG_COLORS[longs % len(LONG_COLORS)])
-            longs += 1
-        else:
-            colors.append(SHORT_COLORS[shorts % len(SHORT_COLORS)])
-            shorts += 1
-    return colors
 
 
 def _path_barrier(strategy: Strategy) -> BarrierOption | None:
@@ -100,25 +87,31 @@ def payoff_figure(position: Position, *, net_of_premium: bool) -> tuple[go.Figur
                 go.Scatter(x=x, y=curve, name=name, mode="lines", line={"color": color, "width": 4})
             )
     else:
-        legs = []
-        for leg, premium in zip(strategy.legs, premiums, strict=True):
-            legs.append(100.0 * (leg.quantity * leg.brick.payoff(spots) - premium) / spot)
-        total = np.sum(legs, axis=0)
-        curves = [total, *legs] if len(legs) > 1 else [total]
+        total = np.sum(
+            [
+                100.0 * (leg.quantity * leg.brick.payoff(spots) - premium) / spot
+                for leg, premium in zip(strategy.legs, premiums, strict=True)
+            ],
+            axis=0,
+        )
+        curves = [total]
         fig.add_trace(
             go.Scatter(x=x, y=total, name=title, mode="lines", line={"color": PRIMARY, "width": 4})
         )
-        if len(legs) > 1:
-            for leg, y, color in zip(strategy.legs, legs, leg_colors(strategy), strict=True):
-                fig.add_trace(
-                    go.Scatter(
-                        x=x,
-                        y=y,
-                        name=leg_name(leg),
-                        mode="lines",
-                        line={"color": color, "dash": "dash", "width": 2},
-                    )
-                )
+        # the strikes, marked on the payoff itself
+        ks = np.array(position.strikes_pct)
+        fig.add_trace(
+            go.Scatter(
+                x=ks,
+                y=np.interp(ks, x, total),
+                mode="markers+text",
+                name="Strikes",
+                text=[f"K {k:g}%" for k in ks],
+                textposition="top center",
+                marker={"color": PRIMARY, "size": 9, "line": {"color": "white", "width": 2}},
+                hovertemplate="strike %{x:g} %<extra></extra>",
+            )
+        )
         if net_of_premium:
             points = breakevens(x, total)
             if points:
@@ -131,22 +124,9 @@ def payoff_figure(position: Position, *, net_of_premium: bool) -> tuple[go.Figur
                         marker={"color": PRIMARY, "size": 11, "symbol": "diamond"},
                     )
                 )
-    if not net_of_premium:
-        holds_underlying = any(isinstance(leg.brick, Underlying) for leg in strategy.legs)
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=x if holds_underlying else x - 100.0,
-                name="Delta one",
-                mode="lines",
-                line={"color": GUIDE, "dash": "dot", "width": 1.5},
-            )
-        )
     span = np.concatenate(curves)
     lo, hi = float(np.nanmin(span)), float(np.nanmax(span))
     pad = 0.1 * max(hi - lo, 1.0)
-    for k in position.strikes_pct:
-        fig.add_vline(x=k, line={"dash": "dashdot", "color": GUIDE, "width": 1})
     if position.barrier_pct is not None:
         fig.add_vline(
             x=position.barrier_pct,
@@ -155,16 +135,10 @@ def payoff_figure(position: Position, *, net_of_premium: bool) -> tuple[go.Figur
             annotation_position="top",
         )
     fig.add_hline(y=0.0, line={"color": "black", "width": 1})
-    fig.add_vline(
-        x=100.0,
-        line={"dash": "dot", "color": "black", "width": 1},
-        annotation_text="spot today",
-        annotation_position="top left",
-    )
     _style(
         fig,
         460,
-        xaxis_title="Spot at maturity (% of today's spot)",
+        xaxis_title="Spot at maturity (% of today's spot = 100)",
         yaxis_title=f"{title} (% of notional)",
         yaxis_range=[lo - pad, hi + pad],
         legend={"orientation": "h", "y": -0.18},
@@ -634,4 +608,31 @@ def call_probability_figure(note: CouponNote, calls_pct: list[float]) -> go.Figu
         yaxis_title="Probability (%)",
         yaxis_range=[0.0, 100.0],
         legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 1.0, "xanchor": "right"},
+    )
+
+
+def packaging_figure(equivalence: Equivalence, spot: float) -> go.Figure:
+    """Payoffs at maturity of both constructions of a pair: the two lines coincide."""
+    grid = np.linspace(0.0, 2.0 * spot, 401)
+    fig = go.Figure()
+    for construction, line in (
+        (equivalence.first, {"color": PRIMARY, "width": 5}),
+        (equivalence.second, {"color": SHORT_COLORS[1], "width": 2, "dash": "dash"}),
+    ):
+        fig.add_trace(
+            go.Scatter(
+                x=100.0 * grid / spot,
+                y=100.0 * np.asarray(construction.strategy.payoff(grid)) / spot,
+                name=construction.name,
+                mode="lines",
+                line=line,
+            )
+        )
+    return _style(
+        fig,
+        340,
+        xaxis_title="Underlying at maturity (% of today)",
+        yaxis_title="Paid (% of today's spot)",
+        legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 0.0},
+        hovermode="x unified",
     )

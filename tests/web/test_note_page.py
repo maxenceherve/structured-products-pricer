@@ -70,6 +70,8 @@ def test_toggles_and_monitoring():
     assert [p.key for p in shown_params(CATALOG["Bonus certificate"], {"capped": False})] == [
         "bonus",
         "barrier",
+        "participation",
+        "strike",
     ]
     daily = position("Shark note (up)", monitoring="daily")
     assert daily.monitoring is Monitoring.DISCRETE
@@ -179,9 +181,7 @@ def test_decomposition_tab():
 def test_levels_and_leg_terms_are_named():
     from web.notes import level_name, smile_levels
 
-    assert [r["Level"] for r in smile_levels(position("Outperformance certificate"))] == [
-        "Initial level"
-    ]
+    assert [r["Level"] for r in smile_levels(position("Outperformance certificate"))] == ["Strike"]
     names = [r["Level"] for r in smile_levels(position("Reverse bonus certificate"))]
     assert "Long call up-and-out (bonus)" in names  # a strike that is no named level
     assert level_name(position("Bonus certificate").note, 1234.0) == "Level 1234%"

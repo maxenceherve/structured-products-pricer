@@ -6,8 +6,6 @@ import numpy as np
 import pytest
 from scipy.stats import norm
 
-import greeks_explain as gx
-import presentation as pres
 from spricer import strategies as strat
 from spricer.greeks_lab import (
     FIRST_ORDER,
@@ -22,6 +20,8 @@ from spricer.greeks_lab import (
     time_profile,
 )
 from spricer.market import FlatVol, Market
+from web import explain as gx
+from web.options import display_greeks
 
 S, R, Q, V = 100.0, 0.03, 0.01, 0.25
 FLAT = Market(S, R, Q, FlatVol(V))
@@ -63,7 +63,7 @@ def test_second_order_greeks_match_black_scholes(k, t):
 def test_first_order_greeks_are_the_app_display_units(market):
     strategy = strat.bull_call_spread(95.0, 115.0, 1.5)
     lab = greeks_at(strategy, market)
-    shown = pres.display_greeks(strategy, market)
+    shown = display_greeks(strategy, market)
     for name in ("Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)"):
         assert float(lab[name]) == pytest.approx(shown[name], rel=1e-10)
     assert float(lab["Price (%)"]) == pytest.approx(float(strategy.value(market)))
@@ -109,15 +109,19 @@ def explain(strategy_of_t, name, family, short=False, money=None, knock_out=Fals
     now = {k: float(v) for k, v in greeks_at(strategy_of_t(t), FLAT).items()}
     quarter = float(greeks_at(strategy_of_t(t / 4), FLAT)["Gamma (%)"])
     situation = gx.Situation(name, family, short, money, knock_out)
-    return " ".join(gx.first_order(situation, now, spots_pct, profile, quarter))
+    return _text(*gx.first_order(situation, now, spots_pct, profile, quarter))
+
+
+def _text(cards, notes) -> str:
+    parts = [f"{c.headline} {' '.join(c.details)}" for c in cards]
+    return " ".join([*parts, *notes])
 
 
 def test_a_long_atm_call_is_explained():
     text = explain(lambda t: strat.call(100.0, t), "Call", "vanilla", money=Moneyness.ATM)
-    assert "At the money" in text
-    assert "gains when the spot rises" in text
-    assert "probability of ending in the money" in text
-    assert "1/sqrt(T)" in text
+    assert "If the spot rises by 1 %, the position gains" in text
+    assert "close to 50 %" in text
+    assert "1/√T" in text
     assert "Theta pays for gamma" in text
 
 
@@ -126,14 +130,14 @@ def test_a_short_put_and_a_digital_are_explained():
         lambda t: strat.put(100.0, t).short(), "Put", "vanilla", short=True, money=Moneyness.ATM
     )
     assert "Short position" in short_put
-    assert "gains when the spot rises" in short_put
+    assert "the position gains" in short_put
     digital = explain(lambda t: strat.digital_call(100.0, t, 10.0), "Digital call", "digital")
     assert "changes sign" in digital
     assert "decides whether it pays" in digital
 
 
 def test_explanations_of_a_worthless_position_and_of_a_far_strike():
-    dead = gx.first_order(
+    _, dead = gx.first_order(
         gx.Situation("Barrier option", "barrier", False),
         dict.fromkeys(FIRST_ORDER, 0.0),
         np.linspace(50, 150, 11),
@@ -143,51 +147,55 @@ def test_explanations_of_a_worthless_position_and_of_a_far_strike():
     assert "worth nothing" in dead[0]
     deep_put = explain(lambda t: strat.put(160.0, t), "Put", "vanilla", t=2.0)
     assert "carry" in deep_put
-    flat_value = gx.first_order(
-        gx.Situation("Zero", "vanilla", False),
-        {
-            "Price (%)": 90.0,
-            "Delta (%)": 0.0,
-            "Gamma (%)": 0.0,
-            "Vega (%)": 0.0,
-            "Theta (%)": 0.01,
-            "Rho (%)": -0.01,
-        },
-        np.linspace(50, 150, 11),
-        dict.fromkeys(FIRST_ORDER, np.zeros(11)),
-        None,
+    flat_value = _text(
+        *gx.first_order(
+            gx.Situation("Zero", "vanilla", False),
+            {
+                "Price (%)": 90.0,
+                "Delta (%)": 0.0,
+                "Gamma (%)": 0.0,
+                "Vega (%)": 0.0,
+                "Theta (%)": 0.01,
+                "Rho (%)": -0.01,
+            },
+            np.linspace(50, 150, 11),
+            dict.fromkeys(FIRST_ORDER, np.zeros(11)),
+            None,
+        )
     )
-    assert any("only the carry" in line for line in flat_value)
+    assert "only the carry" in flat_value
 
 
 def test_a_knock_out_has_a_negative_vega_explained():
-    text = gx.first_order(
-        gx.Situation("Barrier option", "barrier", False, None, knock_out=True),
-        {
-            "Price (%)": 2.0,
-            "Delta (%)": -10.0,
-            "Gamma (%)": -1.0,
-            "Vega (%)": -0.2,
-            "Theta (%)": 0.01,
-            "Rho (%)": 0.0,
-        },
-        np.linspace(50, 150, 11),
-        {k: np.linspace(-1, 1, 11) for k in FIRST_ORDER},
-        None,
+    text = _text(
+        *gx.first_order(
+            gx.Situation("Barrier option", "barrier", False, None, knock_out=True),
+            {
+                "Price (%)": 2.0,
+                "Delta (%)": -10.0,
+                "Gamma (%)": -1.0,
+                "Vega (%)": -0.2,
+                "Theta (%)": 0.01,
+                "Rho (%)": 0.0,
+            },
+            np.linspace(50, 150, 11),
+            {k: np.linspace(-1, 1, 11) for k in FIRST_ORDER},
+            None,
+        )
     )
-    assert any("losing the option" in line for line in text)
-    assert any("falls" in line for line in text)
+    assert "losing the option" in text
+    assert "the position loses" in text
 
 
 def test_second_order_and_note_readings():
-    lines = gx.second_order({"Vanna": 0.4, "Volga": 0.001, "Charm": -0.02, "Speed": 0.03})
-    assert len(lines) == 4
-    assert "raises the delta" in lines[0]
-    assert "gains more and more" in lines[1]
+    cards = gx.second_order({"Vanna": 0.4, "Volga": 0.001, "Charm": -0.02, "Speed": 0.03})
+    assert [c.title for c in cards] == ["Vanna", "Volga", "Charm", "Speed"]
+    assert "+0.40 %" in cards[0].headline
+    assert "gain more and more" in cards[1].details[0]
     negative = gx.second_order({"Vanna": -0.4, "Volga": -0.001, "Charm": 0.02, "Speed": -0.03})
-    assert "lowers the delta" in negative[0]
-    assert "shrinks" in negative[1]
-    reading = gx.note_reading(["A", "B"], [30.0, -5.0], [-0.3, 0.1])
+    assert "-0.40 %" in negative[0].headline
+    assert "shrinks" in negative[1].details[0]
+    reading = gx.coupon_greeks(["A", "B"], [30.0, -5.0], [-0.3, 0.1])
     assert "gains 0.30 %" in reading[0]
     assert "Volatility hurts" in reading[0]
     assert "loses" in reading[1]

@@ -234,7 +234,10 @@ def test_payoff_tab():
         dash.no_update,
     )
     fig, notes = page.payoff_view(store("bull-call-spread"), data, False, "payoff")
-    assert len(fig.data) == 4  # total, two legs, delta one
+    # only the payoff, with the strikes marked on it: no legs, no vertical lines
+    assert [t.name for t in fig.data] == ["Payoff at maturity", "Strikes"]
+    assert list(fig.data[1].x) == [100.0, 110.0]
+    assert all(shape.y0 == shape.y1 for shape in fig.layout.shapes)  # only the zero line
     assert "compounded" in text_of(notes)
     fig, notes = page.payoff_view(store("bull-call-spread"), data, True, "payoff")
     assert "Breakeven at" in text_of(notes)
@@ -256,13 +259,6 @@ def test_a_path_barrier_is_drawn_touched_and_never_touched(slug):
     assert names[:2] == ["Barrier never touched", "Barrier touched"]
     fig, _ = page.payoff_view(store(slug, monitoring="european"), default_data(), True, "payoff")
     assert fig.data[0].name == "P&L at maturity"
-
-
-def test_covered_call_payoff_draws_the_underlying_as_delta_one():
-    pos = position("covered-call")
-    fig, _ = figures.payoff_figure(pos, net_of_premium=False)
-    delta_one = next(t for t in fig.data if t.name == "Delta one")
-    assert delta_one.y[0] == pytest.approx(delta_one.x[0])
 
 
 def test_decomposition_tab():
