@@ -414,7 +414,9 @@ def price_view(
         [
             dbc.Row(
                 [
-                    ui.kpi("Price", f"{price:.2f} %", f"± {Z_95 * se:.2f} % at 95 %"),
+                    ui.kpi(
+                        "Price", f"{price:.2f} %", f"± {Z_95 * se:.2f} % at 95 %", featured=True
+                    ),
                     ui.kpi(
                         "Issuer margin",
                         f"{terms.issue_price - price:+.2f} %",

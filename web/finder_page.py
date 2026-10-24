@@ -132,11 +132,21 @@ def _recommendation(recommendation: Recommendation, rank: int, href: str) -> dbc
         else None
     )
     lines = [
-        html.Div(["✓ ", dcc.Markdown(r, className="d-inline")], className="pos")
+        html.Div(
+            [
+                html.I(className="bi bi-check-circle-fill pos me-2"),
+                dcc.Markdown(r, className="d-inline"),
+            ]
+        )
         for r in recommendation.reasons
     ]
     lines += [
-        html.Div(["⚠ ", dcc.Markdown(w, className="d-inline")], className="finder-warning")
+        html.Div(
+            [
+                html.I(className="bi bi-exclamation-triangle-fill finder-warning me-2"),
+                dcc.Markdown(w, className="d-inline"),
+            ]
+        )
         for w in recommendation.warnings
     ]
     return dbc.Card(
@@ -166,10 +176,7 @@ def _recommendation(recommendation: Recommendation, rank: int, href: str) -> dbc
                             html.Div(lines, className="finder-lines"),
                             dcc.Link(
                                 dbc.Button(
-                                    [
-                                        f"Price the {card.name.lower()}",
-                                        html.I(className="bi bi-arrow-right ms-2"),
-                                    ],
+                                    f"Price the {card.name.lower()}",
                                     color="primary",
                                     size="sm",
                                     className="mt-2",

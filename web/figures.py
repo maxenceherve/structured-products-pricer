@@ -16,24 +16,32 @@ from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
 from web.options import Position, breakevens
 
-PRIMARY = "#1f4e79"
-GUIDE = "#7f7f7f"
-LONG_COLORS = ("#1a9850", "#2c7fb8", "#00a087", "#7fbc41", "#41b6c4")
-SHORT_COLORS = ("#d73027", "#f46d43", "#c51b7d", "#8c510a", "#e08214")
-ZONE_COLORS = {"ITM": "rgba(26, 152, 80, 0.08)", "OTM": "rgba(215, 48, 39, 0.07)"}
-ATM_COLOR = "rgba(31, 78, 121, 0.14)"
-FONT = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+# The ledger: ink lines, red ink for what is sold or lost, ledger green for the rest
+PRIMARY = "#1b2a41"
+GUIDE = "#9aa6b4"
+LONG_COLORS = ("#1e6b57", "#46546b", "#5d8a6f", "#6e7a8c", "#2f7f6b")
+SHORT_COLORS = ("#b3261e", "#c4603b", "#8a6d1d", "#7d1a14", "#a3542d")
+ZONE_COLORS = {"ITM": "rgba(30, 107, 87, 0.07)", "OTM": "rgba(179, 38, 30, 0.05)"}
+ATM_COLOR = "rgba(27, 42, 65, 0.09)"
+FONT = "IBM Plex Sans, Segoe UI, system-ui, sans-serif"
+GRID = "#e6efe2"
+TEXT = "#1b2a41"
 
 
 def _style(fig: go.Figure, height: int, **layout: object) -> go.Figure:
     base: dict[str, object] = {"margin": {"t": 50, "r": 10, "l": 10, "b": 10}}
     fig.update_layout(
         template="plotly_white",
-        font={"family": FONT, "size": 13},
+        font={"family": FONT, "size": 12, "color": TEXT},
         height=height,
-        hoverlabel={"font_family": FONT},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#ffffff",
+        hoverlabel={"font_family": FONT, "bgcolor": "#ffffff", "bordercolor": GRID},
+        colorway=[PRIMARY, SHORT_COLORS[1], LONG_COLORS[0], SHORT_COLORS[0], LONG_COLORS[3]],
         **(base | layout),
     )
+    fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID)
+    fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID)
     return fig
 
 
@@ -217,11 +225,11 @@ def greeks_grid_figure(
             row=r,
             col=c,
         )
-    keys = [("At the money zone", ATM_COLOR, "square")]
+    keys = [("At the money zone", "rgba(27, 42, 65, 0.35)", "square")]
     if position.single:
         keys += [
-            ("In the money", ZONE_COLORS["ITM"].replace("0.08", "0.4"), "square"),
-            ("Out of the money", ZONE_COLORS["OTM"].replace("0.07", "0.4"), "square"),
+            ("In the money", "rgba(30, 107, 87, 0.3)", "square"),
+            ("Out of the money", "rgba(179, 38, 30, 0.25)", "square"),
         ]
     keys.append(("Today's spot", SHORT_COLORS[0], "circle"))
     for label, color, symbol in keys:  # legend only: what the shading and the dot mean
@@ -388,8 +396,8 @@ def scenario_heatmap_figure(
 
 # --- Notes ---------------------------------------------------------------------------------------
 
-LEVEL_COLORS = ("#2ca02c", "#d62728", "#ff7f0e", "#9467bd", "#17becf")
-PAYOFF_LEVEL_COLORS = ("#8b0000", "#6a3d9a", "#b15928", "#1f78b4")
+LEVEL_COLORS = ("#1e6b57", "#b3261e", "#8a6d1d", "#46546b", "#6e7a8c")
+PAYOFF_LEVEL_COLORS = ("#8a6d1d", "#1e6b57", "#b3261e", "#46546b")
 
 
 def note_payoff_figure(note: Note, today_pct: float, *, underlying: bool = True) -> go.Figure:

@@ -263,7 +263,7 @@ def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
         html.Div(head, className="mb-2"),
         dbc.Row(
             [
-                ui.kpi("Price", f"{price:.2f} %", f"{abs(premium):,.0f} {paid}"),
+                ui.kpi("Price", f"{price:.2f} %", f"{abs(premium):,.0f} {paid}", featured=True),
                 ui.kpi("Delta", f"{greeks['Delta (%)']:+.1f} %", "per +1 % spot: Δ/100 %"),
                 ui.kpi("Gamma", f"{greeks['Gamma (%)']:+.2f} %", "Δ change per +1 % spot"),
                 ui.kpi("Vega", f"{greeks['Vega (%)']:+.3f} %", "per vol point"),

@@ -139,7 +139,7 @@ def smile_figure(market: Market) -> go.Figure:
     surface = market.vol
     strikes = np.linspace(0.5 * market.spot, 1.6 * market.spot, 111)
     if isinstance(surface, InterpolatedVolSurface):
-        for t, color in zip((0.25, 1.0, 3.0), ("#d73027", "#1f4e79", "#1a9850"), strict=True):
+        for t, color in zip((0.25, 1.0, 3.0), ("#b3261e", "#1b2a41", "#1e6b57"), strict=True):
             fig.add_trace(
                 go.Scatter(
                     x=100.0 * strikes / market.spot,
@@ -156,7 +156,11 @@ def smile_figure(market: Market) -> go.Figure:
         yaxis_title="Vol (%)",
         legend={"orientation": "h", "y": -0.3},
         template="plotly_white",
+        font={"family": "IBM Plex Sans, Segoe UI, sans-serif", "size": 12, "color": "#1b2a41"},
+        paper_bgcolor="#ffffff",
     )
+    fig.update_xaxes(gridcolor="#e6efe2")
+    fig.update_yaxes(gridcolor="#e6efe2")
     return fig
 
 
@@ -201,6 +205,16 @@ def card(product: Product) -> dbc.Col:
     )
 
 
+def _family_shape(family: str) -> html.A:
+    """A family drawn by the payoff of its first product: a link to its section."""
+    first = next(p for p in registry.PRODUCTS if p.family == family)
+    return html.A(
+        [html.Img(src=payoff_data_uri(first), alt=""), family],
+        href=f"#{registry.slugify(family)}",
+        className="hero-shape",
+    )
+
+
 def gallery(query: str | None = None) -> html.Div:
     """Every product matching ``query``, by family and group, four per row."""
     products = registry.matching(query)
@@ -209,26 +223,33 @@ def gallery(query: str | None = None) -> html.Div:
         sections.append(
             html.Div(
                 [
-                    html.H1("Structured Products Pricer", className="hero-title"),
-                    html.P(
-                        "Price options and structured products on your own volatility smile: "
-                        "payoff, Greeks and what they mean, hedging, Monte Carlo checks and "
-                        "product sheets. Pick a product below, or describe what you need.",
-                        className="hero-text",
+                    html.Div(
+                        [
+                            html.H1("Structured Products Pricer", className="hero-title"),
+                            html.P(
+                                "Price options and structured products on your own volatility "
+                                "smile: the payoff, the Greeks and what they mean, the hedge, a "
+                                "Monte Carlo check and a product sheet for each of them.",
+                                className="hero-text",
+                            ),
+                        ]
+                    ),
+                    html.Nav(
+                        [_family_shape(f) for f in registry.FAMILIES],
+                        className="hero-shapes",
                     ),
                 ],
                 className="hero",
             )
         )
         sections.append(
-            dbc.Alert(
+            html.Div(
                 [
-                    html.Strong("Not sure where to start? "),
-                    "Describe your view and constraints and get products that fit. ",
-                    dcc.Link("Find a product →", href="/finder", className="alert-link"),
+                    "Not sure which product fits your view? ",
+                    dcc.Link("Answer five questions in the product finder", href="/finder"),
+                    ".",
                 ],
-                color="light",
-                className="finder-banner",
+                className="finder-banner mb-2",
             )
         )
     if not products:

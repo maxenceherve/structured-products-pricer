@@ -18,45 +18,50 @@ from numpy.typing import ArrayLike
 
 Table = tuple[list[str], Sequence[Sequence[object]]]  # header, rows
 Series = tuple[str, ArrayLike, str]  # name, values, colour
-PRIMARY, GUIDE, ACCENT = "#1f4e79", "#9aa5b5", "#f46d43"
+PRIMARY, GUIDE, ACCENT = "#1b2a41", "#9aa6b4", "#b3261e"
 
 STYLE = """
 * { box-sizing: border-box; }
-body { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b2333; margin: 0;
-       background: #eef2f8; }
-.page { max-width: 920px; margin: 32px auto; background: #fff; padding: 40px 48px;
-        border-radius: 14px; box-shadow: 0 8px 28px rgba(27, 35, 51, 0.08); }
-.family { text-transform: uppercase; letter-spacing: 0.12em; color: #6b7587; font-size: 0.78em;
-          text-align: center; }
-h1 { color: #1f4e79; margin: 6px 0 4px; text-align: center; font-size: 2.1em; }
-.subtitle { color: #5b6577; margin: 0 auto 24px; text-align: center; max-width: 680px; }
-.figures { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 8px 0 20px; }
-.figure { border: 1px solid #dde3ec; border-radius: 10px; padding: 10px 16px; min-width: 150px;
-          text-align: center; }
-.figure .label { font-size: 0.72em; color: #6b7587; text-transform: uppercase;
-                 letter-spacing: 0.05em; }
-.figure .value { font-size: 1.35em; font-weight: 700; color: #1b2333; }
-.figure .sub { font-size: 0.75em; color: #6b7587; }
-h2 { color: #1f4e79; border-bottom: 2px solid #dde3ec; padding-bottom: 4px; margin: 30px 0 12px;
-     font-size: 1.1em; text-align: center; }
+body { font-family: 'IBM Plex Sans', 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b2a41;
+       margin: 0; background: #ffffff; font-size: 14px; font-variant-numeric: tabular-nums; }
+.page { max-width: 880px; margin: 40px auto; padding: 0 32px; }
+.family { color: #46546b; font-size: 14px; text-align: center; font-style: italic;
+          font-family: 'IBM Plex Serif', Georgia, serif; }
+h1 { font-family: 'IBM Plex Serif', Georgia, serif; color: #1b2a41; margin: 6px 0 6px;
+     text-align: center; font-size: 36px; font-weight: 600; }
+.subtitle { color: #46546b; margin: 0 auto 20px; text-align: center; max-width: 62ch;
+            font-size: 16px; }
+.figures { display: flex; flex-wrap: wrap; justify-content: center; margin: 8px 0 24px;
+           border-top: 2px solid #1b2a41; border-bottom: 1px solid #bfd1ba; padding: 12px 0; }
+.figure { padding: 4px 20px; text-align: center; border-left: 1px solid #bfd1ba; }
+.figure:first-child { border-left: 0; }
+.figure .label { font-size: 13px; color: #46546b; }
+.figure .value { font-size: 21px; font-weight: 500; color: #1b2a41; }
+.figure:first-child .value { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 28px;
+                             font-weight: 600; }
+.figure .sub { font-size: 12px; color: #6e7a8c; }
+h2 { font-family: 'IBM Plex Serif', Georgia, serif; color: #1b2a41; border-bottom: 1px solid
+     #bfd1ba; padding-bottom: 6px; margin: 32px 0 12px; font-size: 21px; font-weight: 600;
+     text-align: center; }
 .chart { text-align: center; }
-table { border-collapse: collapse; margin: 0 auto; font-size: 0.88em; }
-th { background: #eef2f8; padding: 6px 9px; text-align: center; }
-td { border-top: 1px solid #dde3ec; padding: 6px 9px; text-align: center; }
-td.num { font-variant-numeric: tabular-nums; }
-td.pos { color: #1a9850; } td.neg { color: #d73027; }
-th.row { text-align: left; background: #f7f9fc; white-space: nowrap; }
-table.scenario { margin-bottom: 10px; min-width: 420px; }
-table.scenario tr.today td, table.scenario tr.today th { background: #e6edf6; }
-.columns { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
+table { border-collapse: collapse; margin: 0 auto; font-size: 13px; }
+th { background: #edf3ea; padding: 7px 12px; text-align: center; color: #46546b;
+     font-weight: 500; border-bottom: 1px solid #bfd1ba; }
+td { border-bottom: 1px solid #dbe6d6; padding: 7px 12px; text-align: center; }
+td.num { text-align: right; }
+td.pos { color: #1b2a41; } td.neg { color: #b3261e; }
+th.row { text-align: left; background: #ffffff; white-space: nowrap; font-weight: 400;
+         border-bottom: 1px solid #dbe6d6; }
+table.scenario { margin-bottom: 12px; min-width: 420px; }
+table.scenario tr.today td, table.scenario tr.today th { background: #edf3ea; font-weight: 600; }
+.columns { display: flex; gap: 32px; justify-content: center; flex-wrap: wrap; }
 .columns > div { flex: 1; min-width: 300px; }
-.note { color: #5b6577; font-size: 0.85em; text-align: center; margin: 8px auto 0;
-        max-width: 720px; }
-ul.risks { max-width: 720px; margin: 0 auto; line-height: 1.5; }
-.notice { background: #fff4e5; border-left: 4px solid #f46d43; padding: 8px 12px;
-          font-size: 0.85em; margin: 28px auto 0; max-width: 720px; }
-.footer { color: #7f7f7f; font-size: 0.78em; margin-top: 18px; text-align: center; }
-@media print { body { background: #fff; } .page { box-shadow: none; margin: 0 auto; } }
+.note { color: #46546b; font-size: 13px; text-align: center; margin: 8px auto 0; max-width: 70ch; }
+ul.risks { max-width: 70ch; margin: 0 auto; line-height: 1.6; }
+.notice { border-left: 3px solid #b3261e; background: #fdf3f2; padding: 8px 12px;
+          font-size: 13px; margin: 32px auto 0; max-width: 70ch; color: #7d1a14; }
+.footer { color: #6e7a8c; font-size: 12px; margin-top: 16px; text-align: center; }
+@media print { .page { margin: 0 auto; } }
 """
 
 
@@ -148,12 +153,13 @@ def chart_svg(chart: Chart, width: int = 780, height: int = 330) -> str:
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}" font-family="Segoe UI, Arial" font-size="11">'
+        f'viewBox="0 0 {width} {height}" font-family="IBM Plex Sans, Segoe UI, Arial" '
+        'font-size="11">'
     ]
     for t in _ticks(y_low, y_high):
         parts.append(
             f'<line x1="{left}" x2="{width - right}" y1="{py(t):.1f}" y2="{py(t):.1f}" '
-            f'stroke="#eef2f8"/><text x="{left - 6}" y="{py(t) + 4:.1f}" text-anchor="end" '
+            f'stroke="#e6efe2"/><text x="{left - 6}" y="{py(t) + 4:.1f}" text-anchor="end" '
             f'fill="#6b7587">{t:g}</text>'
         )
     for t in _ticks(x_low, x_high, 8):
@@ -164,7 +170,7 @@ def chart_svg(chart: Chart, width: int = 780, height: int = 330) -> str:
     if chart.zero_line:
         parts.append(
             f'<line x1="{left}" x2="{width - right}" y1="{py(0):.1f}" y2="{py(0):.1f}" '
-            'stroke="#1b2333" stroke-width="1"/>'
+            'stroke="#1b2a41" stroke-width="1"/>'
         )
     for level, name in chart.levels:
         if x_low <= level <= x_high:
@@ -188,13 +194,13 @@ def chart_svg(chart: Chart, width: int = 780, height: int = 330) -> str:
             parts.append(_polyline(segment, color, dash))
         parts.append(
             f'<rect x="{legend_x}" y="8" width="14" height="4" fill="{color}"/>'
-            f'<text x="{legend_x + 19}" y="14" fill="#1b2333">{html.escape(name)}</text>'
+            f'<text x="{legend_x + 19}" y="14" fill="#1b2a41">{html.escape(name)}</text>'
         )
         legend_x += 30 + 6.5 * len(name)
     parts.append(
         f'<text x="{(left + width - right) / 2}" y="{height - 8}" text-anchor="middle" '
-        f'fill="#3a4558">{html.escape(chart.x_label)}</text>'
-        f'<text x="14" y="{(top + height - bottom) / 2}" text-anchor="middle" fill="#3a4558" '
+        f'fill="#46546b">{html.escape(chart.x_label)}</text>'
+        f'<text x="14" y="{(top + height - bottom) / 2}" text-anchor="middle" fill="#46546b" '
         f'transform="rotate(-90 14 {(top + height - bottom) / 2})">'
         f"{html.escape(chart.y_label)}</text></svg>"
     )

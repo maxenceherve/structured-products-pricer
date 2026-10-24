@@ -9,9 +9,10 @@ import numpy as np
 from web.registry import Product
 
 WIDTH, HEIGHT, PAD = 240, 140, 14
-LINE = "#1f4e79"
-GUIDE = "#c4ccd8"
-MARKER = "#f46d43"
+LINE = "#1b2a41"
+GUIDE = "#9fbf98"
+MARKER = "#b3261e"
+GRID_LINE = "#eaf1e7"  # the squared paper the payoff is drawn on
 _GRID = np.linspace(30.0, 170.0, 351)  # underlying at maturity, % of initial
 
 
@@ -47,11 +48,16 @@ def payoff_svg(product: Product) -> str:
             f'<line x1="{x:.1f}" y1="{PAD / 2:.1f}" x2="{x:.1f}" y2="{HEIGHT - PAD / 2:.1f}" '
             f'stroke="{MARKER}" stroke-width="1.5" stroke-dasharray="4 4"/>'
         )
+    # the squared paper, as a path: one element whatever the number of squares
+    squares = "".join(f"M{x} 0V{HEIGHT}" for x in range(0, WIDTH + 1, 20)) + "".join(
+        f"M0 {y}H{WIDTH}" for y in range(0, HEIGHT + 1, 20)
+    )
+    paper = f'<path d="{squares}" stroke="{GRID_LINE}" fill="none"/>'
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" '
-        f'viewBox="0 0 {WIDTH} {HEIGHT}">{marker}'
+        f'viewBox="0 0 {WIDTH} {HEIGHT}">{paper}{marker}'
         f'<polyline points="{guide}" fill="none" stroke="{GUIDE}" stroke-width="1.5"{dash}/>'
-        f'<polyline points="{line}" fill="none" stroke="{LINE}" stroke-width="3" '
+        f'<polyline points="{line}" fill="none" stroke="{LINE}" stroke-width="2.5" '
         'stroke-linejoin="round" stroke-linecap="round"/></svg>'
     )
 

@@ -24,6 +24,10 @@ from web.market import (
 from web.notes import NotePosition
 
 TITLE = "Structured Products Pricer"
+FONTS = (
+    "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600"
+    "&family=IBM+Plex+Serif:ital,wght@0,500;0,600;1,400&display=swap"
+)
 
 
 # --- Pure functions behind the callbacks -------------------------------------------------------
@@ -103,18 +107,30 @@ def sync_panel(_: bool, data: MarketData) -> PanelValues:
     return panel_values(data)
 
 
-def market_summary(data: MarketData) -> str:
-    """The session market in one line, shown on every product page."""
+def market_summary(data: MarketData) -> Any:
+    """The session market, shown on every product page: each figure with its name."""
     try:
         market = market_from_data(data)
     except ValueError as exc:
-        return f"Market data invalid: {exc}"
+        return html.Span(f"The market data are invalid: {exc}", className="neg")
     atm = 100.0 * float(market.vol.vol(market.spot, 1.0))
-    return (
-        f"Market: spot {market.spot:,.2f} · rate {100 * market.rate:.2f} % · dividend "
-        f"{100 * market.dividend_yield:.2f} % · funding spread {funding_bp(data):g} bp · "
-        f"ATM volatility 1y {atm:.2f} %"
+    figures = (
+        ("Spot", f"{market.spot:,.2f}"),
+        ("Rate", f"{100 * market.rate:.2f} %"),
+        ("Dividend", f"{100 * market.dividend_yield:.2f} %"),
+        ("Funding spread", f"{funding_bp(data):g} bp"),
+        ("ATM volatility, 1 year", f"{atm:.2f} %"),
     )
+    return [
+        html.Span(
+            [
+                html.Span(label, className="market-label"),
+                html.Span(value, className="market-value"),
+            ],
+            className="market-item",
+        )
+        for label, value in figures
+    ]
 
 
 def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
@@ -147,7 +163,7 @@ def create_app() -> dash.Dash:
     app = dash.Dash(
         __name__,
         title=TITLE,
-        external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP],
+        external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP, FONTS],
         suppress_callback_exceptions=True,
         update_title=None,  # type: ignore[arg-type]  # None keeps the tab title still
     )

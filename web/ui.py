@@ -93,8 +93,11 @@ def table(header: list[str], rows: list[list[Any]], total: bool = False) -> dbc.
     )
 
 
-def kpi(label: str, value: str, sub: str = "") -> dbc.Col:
-    """A headline number with its label and a short explanation."""
+def kpi(label: str, value: str, sub: str = "", featured: bool = False) -> dbc.Col:
+    """A headline number with its label and a short explanation.
+
+    A ``featured`` number (the price) gets a wider, highlighted block of the bento row.
+    """
     return dbc.Col(
         html.Div(
             [
@@ -102,10 +105,10 @@ def kpi(label: str, value: str, sub: str = "") -> dbc.Col:
                 html.Div(value, className="kpi-value"),
                 html.Div(sub, className="kpi-sub"),
             ],
-            className="kpi",
+            className="kpi kpi-featured" if featured else "kpi",
         ),
-        xs=6,
-        md=True,
+        xs=12 if featured else 6,
+        md=4 if featured else True,
     )
 
 
@@ -141,7 +144,12 @@ def tab_bar(tabs: tuple[str, ...], first: str) -> dbc.Tabs:
 
 def tab_block(tab: str, content: Any, shown: bool) -> html.Div:
     """Content of one tab; :func:`show_tab` shows the active one."""
-    return html.Div(content, id={"type": "tab-block", "tab": tab}, style=SHOWN if shown else HIDDEN)
+    return html.Div(
+        content,
+        id={"type": "tab-block", "tab": tab},
+        style=SHOWN if shown else HIDDEN,
+        className="tab-panel",
+    )
 
 
 def show_tab(active: str | None, ids: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -171,15 +179,14 @@ def product_shell(
             html.P(description, className="product-description"),
             html.Div(
                 [
-                    html.I(className="bi bi-graph-up me-2"),
-                    html.Span(id="market-summary"),
+                    html.Span(id="market-summary", className="d-contents"),
                     dbc.Button(
-                        [html.I(className="bi bi-gear-fill me-1"), "Edit the market"],
+                        "Change the market data",
                         id={"type": "open-market", "where": "product"},
                         color="link",
                         size="sm",
                         n_clicks=0,
-                        className="ms-2 py-0",
+                        className="py-0",
                     ),
                 ],
                 className="market-strip",
@@ -305,7 +312,7 @@ def scenario_table(
 def apply_button(id_: str) -> dbc.Button:
     """Button that writes a solved value into the terms, hidden until there is one."""
     return dbc.Button(
-        [html.I(className="bi bi-box-arrow-in-left me-2"), "Use this value in the terms"],
+        "Use this value in the terms",
         id=id_,
         color="success",
         outline=True,
@@ -319,7 +326,7 @@ def apply_button(id_: str) -> dbc.Button:
 def sheet_button(id_: str) -> dbc.Button:
     """Button that downloads the product sheet."""
     return dbc.Button(
-        [html.I(className="bi bi-file-earmark-richtext me-2"), "Product sheet"],
+        "Download the product sheet",
         id=id_,
         color="primary",
         outline=True,

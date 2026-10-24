@@ -188,10 +188,11 @@ def test_the_market_summary_and_the_funding_spread():
     from web.app import market_summary
     from web.market import funding_bp
 
-    text = market_summary(default_data() | {"funding_bp": 40.0})
-    assert "funding spread 40 bp" in text
-    assert "ATM volatility 1y" in text
-    assert "invalid" in market_summary(default_data() | {"spot": None})
+    text = text_of(html.Div(market_summary(default_data() | {"funding_bp": 40.0})))
+    assert "Funding spread" in text
+    assert "40 bp" in text
+    assert "ATM volatility, 1 year" in text
+    assert "invalid" in text_of(market_summary(default_data() | {"spot": None}))
     assert funding_bp({"funding_bp": "x"}) == 0.0
     assert funding_bp({"funding_bp": float("inf")}) == 0.0
     assert funding_bp({}) == 0.0

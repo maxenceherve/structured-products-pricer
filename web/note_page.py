@@ -236,7 +236,10 @@ def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
     g = desk_greeks(position.greeks(), position.market.spot)
     top = [
         ui.kpi(
-            "Price", f"{price:.2f} %", f"{price / 100.0 * position.notional:,.0f} for the notional"
+            "Price",
+            f"{price:.2f} %",
+            f"{price / 100.0 * position.notional:,.0f} for the notional",
+            featured=True,
         )
     ]
     if bond:
