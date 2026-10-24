@@ -136,7 +136,7 @@ def test_invalid_terms_leave_the_smile_placeholders_empty():
 
 
 def test_barrier_options_by_monitoring():
-    continuous = position("down-and-out-call", barrier=80.0)
+    continuous = position("down-and-out-call", barrier=80.0, monitoring="continuous")
     daily = position("down-and-out-call", barrier=80.0, monitoring="daily")
     european = position("down-and-out-call", barrier=80.0, monitoring="european")
     # observed more often, a knock-out is touched more often and worth less
@@ -240,10 +240,10 @@ def test_payoff_tab():
     assert all(shape.y0 == shape.y1 for shape in fig.layout.shapes)  # only the zero line
     assert "compounded" in text_of(notes)
     fig, notes = page.payoff_view(store("bull-call-spread"), data, True, "payoff")
-    assert "Breakeven at" in text_of(notes)
+    assert "104.6 %" in text_of(notes)  # the breakeven, above the table
     assert fig.data[-1].name == "Breakeven"
     _, notes = page.payoff_view(store("digital-call"), data, True, "payoff")
-    assert "Breakeven at" in text_of(notes)
+    assert "Breakeven" in text_of(notes)
     _, notes = page.payoff_view(store("synthetic-forward", strike_0=150.0), data, True, "payoff")
     assert "Breakeven" in text_of(notes)
     _, notes = page.payoff_view(store("box-spread"), data, True, "payoff")
@@ -254,7 +254,7 @@ def test_payoff_tab():
 
 @pytest.mark.parametrize("slug", ["up-and-out-call", "down-and-in-put"])
 def test_a_path_barrier_is_drawn_touched_and_never_touched(slug):
-    fig, _ = page.payoff_view(store(slug), default_data(), False, "payoff")
+    fig, _ = page.payoff_view(store(slug, monitoring="continuous"), default_data(), False, "payoff")
     names = [t.name for t in fig.data]
     assert names[:2] == ["Barrier never touched", "Barrier touched"]
     fig, _ = page.payoff_view(store(slug, monitoring="european"), default_data(), True, "payoff")
@@ -436,7 +436,8 @@ def test_the_simulator_matches_its_theory():
     assert "priced on the smile" in smile
     assert "Set the terms" in text_of(page.simulate_view(1, None, data, None, "Daily", 0, 2000))
     assert "positive" in text_of(page.simulate_view(1, store("call"), data, -5.0, "Daily", 0, 2000))
-    path = text_of(page.simulate_view(1, store("up-and-out-call"), data, None, "Daily", 0, 2000))
+    path_store = store("up-and-out-call", monitoring="continuous")
+    path = text_of(page.simulate_view(1, path_store, data, None, "Daily", 0, 2000))
     assert "barriers observed at maturity" in path
     european = store("up-and-out-call", monitoring="european")
     assert "Mean P&L" in text_of(page.simulate_view(1, european, data, None, "Monthly", 0, 2000))
@@ -536,7 +537,11 @@ def test_european_barrier_payoff_has_no_two_scenarios():
     [
         ("bull-call-spread", {}, ["Breakeven at 104.6 %", "most you can lose", "Legs"]),
         ("covered-call", {"side": "Short"}, ["Short options", "Delta one"]),
-        ("up-and-out-call", {}, ["American (continuous)", "Paid if the barrier was never touched"]),
+        (
+            "up-and-out-call",
+            {"monitoring": "continuous"},
+            ["American (continuous)", "Paid if the barrier was never touched"],
+        ),
         ("up-and-out-call", {"monitoring": "european"}, ["European (at maturity)"]),
         ("digital-call", {"maturity": 1.0}, ["Breakeven at"]),
     ],

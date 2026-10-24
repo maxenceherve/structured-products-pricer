@@ -40,7 +40,7 @@ from web.coupons import (
     result_json,
     schedule_rows,
 )
-from web.market import MarketData, default_data
+from web.market import MarketData, default_data, funding_bp
 from web.registry import Product
 from web.scenarios import coupon_scenarios
 from web.sheets import coupon_sheet
@@ -146,7 +146,12 @@ def _terms_card(spec: CouponNoteSpec) -> dbc.Card:
         ),
         dbc.Row(
             [
-                dbc.Col(ui.field("Issuer spread (bp)", ui.number(term("spread_bp"), 0.0, 10.0))),
+                dbc.Col(
+                    ui.field(
+                        "Funding spread (bp)",
+                        ui.number(term("spread_bp"), None, 5.0, placeholder="= market"),
+                    )
+                ),
                 *(
                     [dbc.Col(ui.monitoring_field("Protection barrier observed", "european"))]
                     if spec.monitoring_choice
@@ -369,7 +374,7 @@ def _setup(
     if not store:
         raise ValueError("Set the terms of the product.")
     product_spec = coupon_spec_of(store)
-    terms = build_coupon(product_spec, store["terms"])
+    terms = build_coupon(product_spec, store["terms"], funding_bp(data))
     return terms, basket_of(list(rows or []), corr, data)
 
 

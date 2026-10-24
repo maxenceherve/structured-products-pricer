@@ -42,7 +42,7 @@ from web.options import (
     smile_vols,
 )
 from web.registry import Product
-from web.scenarios import option_scenarios
+from web.scenarios import option_breakevens, option_scenarios
 from web.sheets import option_sheet
 
 GREEK_VIEWS = ("Against the spot", "Against time", "Second order")
@@ -288,26 +288,25 @@ def payoff_view(
         position = _position(store, data)
     except ValueError as exc:
         return go.Figure(), ui.error(str(exc))
-    fig, points = figures.payoff_figure(position, net_of_premium=bool(net))
-    notes: list[Any] = []
-    if net:
+    fig, _ = figures.payoff_figure(position, net_of_premium=bool(net))
+    levels, rows = option_scenarios(position)
+    points = option_breakevens(position)
+    notes: list[Any] = [
+        html.H6("Paid at maturity", className="mt-2"),
+        ui.scenario_table("Spot at maturity", levels, rows, points),
+    ]
+    if not points:
         notes.append(
             ui.note(
-                "Breakeven at " + " and ".join(f"{p:.1f} %" for p in points) + " of today's spot."
-                if points
-                else "No breakeven: the P&L keeps one sign, or stays at zero, wherever the spot "
-                "ends."
+                "No breakeven: the P&L keeps one sign, or stays at zero, wherever the spot ends."
             )
         )
-    levels, rows = option_scenarios(position)
-    notes += [
-        html.H6("Paid at maturity", className="mt-2"),
-        ui.scenario_table("Spot at maturity", levels, rows),
+    notes.append(
         ui.note(
-            "Amounts in % of the notional, spots in % of today's; the P&L subtracts the "
-            "premium compounded at the risk-free rate to maturity."
-        ),
-    ]
+            "Amounts in % of the notional, spots in % of today's (its line is shaded); the P&L "
+            "subtracts the premium compounded at the risk-free rate to maturity."
+        )
+    )
     return fig, html.Div(notes)
 
 

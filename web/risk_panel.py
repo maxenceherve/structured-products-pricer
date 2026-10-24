@@ -23,7 +23,7 @@ from spricer.products.notes import NOTIONAL
 from spricer.risk import STEPS, TERMS, Shock, explain, scenario_matrix
 from web import explain as ex
 from web import figures, registry, ui
-from web.market import MarketData, market_from_data
+from web.market import MarketData, funding_bp, market_from_data
 from web.notes import NotePosition, build_note, note_spec
 from web.options import Position, build_position, setup_of
 
@@ -51,7 +51,7 @@ def resolve(store: dict[str, Any] | None, data: MarketData) -> Position | NotePo
         return build_position(setup, store["terms"], store.get("vols"), market)
     spec = note_spec(product)
     if spec is not None:
-        return build_note(spec, store["terms"], market)
+        return build_note(spec, store["terms"], market, funding_bp(data))
     raise ValueError("This page has no product to price.")
 
 

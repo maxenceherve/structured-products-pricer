@@ -88,7 +88,7 @@ def test_toggles_and_monitoring():
         ({"maturity": "x"}, "maturity must be a number"),
         ({"notional": 0.0}, "notional must be positive"),
         ({"initial": -5.0}, "initial level must be positive"),
-        ({"spread_bp": None}, "credit spread must be a number"),
+        ({"spread_bp": "x"}, "funding spread must be a number"),
         ({"bonus": None}, "Bonus level must be a number"),
     ],
 )

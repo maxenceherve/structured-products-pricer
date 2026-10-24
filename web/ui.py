@@ -166,6 +166,21 @@ def product_shell(
             breadcrumb(product),
             html.H1(product.name, className="product-title mb-1"),
             html.P(description, className="product-description"),
+            html.Div(
+                [
+                    html.I(className="bi bi-graph-up me-2"),
+                    html.Span(id="market-summary"),
+                    dbc.Button(
+                        [html.I(className="bi bi-gear-fill me-1"), "Edit the market"],
+                        id={"type": "open-market", "where": "product"},
+                        color="link",
+                        size="sm",
+                        n_clicks=0,
+                        className="ms-2 py-0",
+                    ),
+                ],
+                className="market-strip",
+            ),
             dbc.Row(
                 [
                     dbc.Col(terms_card, lg=4, className="mb-4"),
@@ -238,30 +253,48 @@ def monitoring_field(label: str, value: str) -> html.Div:
 
 
 def scenario_table(
-    level_label: str, levels: Sequence[float], rows: Sequence[tuple[str, Sequence[float]]]
+    level_label: str,
+    levels: Sequence[float],
+    rows: Sequence[tuple[str, Sequence[float]]],
+    breakevens: Sequence[float] = (),
 ) -> html.Div:
-    """What is paid for a few final levels: one column per level, one row per amount."""
-    head = html.Tr([html.Th(level_label), *[html.Th(f"{x:g} %") for x in levels]])
+    """What is paid at a few final levels: one line per level, one column per amount.
+
+    The breakevens are given above the table; the line of today's level (100 %) is marked.
+    """
+    head = html.Tr([html.Th(level_label), *[html.Th(name) for name, _ in rows]])
     body = []
-    for name, values in rows:
-        cells = []
-        for v in values:
+    for i, level in enumerate(levels):
+        cells = [html.Td(f"{level:g} %", className="scenario-level")]
+        for name, values in rows:
+            v = values[i]
             if v != v:  # nan: this case cannot happen at this level
                 cells.append(html.Td("n/a", className="text-muted"))
             elif name.startswith(("P&L", "Gain")):
                 cells.append(html.Td(fmt(v, 2)))
             else:
                 cells.append(html.Td(f"{v:.2f}"))
-        body.append(html.Tr([html.Th(name, className="scenario-name"), *cells]))
+        body.append(html.Tr(cells, className="scenario-today" if level == 100.0 else ""))
+    badges: list[Any] = []
+    if breakevens:
+        badges = [
+            html.Span("Breakeven", className="scenario-badge-label"),
+            *[dbc.Badge(f"{b:.1f} %", color="primary", className="ms-2") for b in breakevens],
+        ]
     return html.Div(
-        dbc.Table(
-            [html.Thead(head), html.Tbody(body)],
-            bordered=False,
-            hover=True,
-            size="sm",
-            className="result-table scenario-table",
-        ),
-        className="table-responsive",
+        [
+            html.Div(badges, className="mb-2") if badges else None,
+            html.Div(
+                dbc.Table(
+                    [html.Thead(head), html.Tbody(body)],
+                    bordered=False,
+                    hover=True,
+                    size="sm",
+                    className="result-table scenario-table",
+                ),
+                className="scenario-wrap",
+            ),
+        ]
     )
 
 

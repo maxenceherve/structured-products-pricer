@@ -41,7 +41,7 @@ from web.notes import (
 )
 from web.options import GREEKS
 from web.registry import Product
-from web.scenarios import note_scenarios
+from web.scenarios import note_breakevens, note_scenarios
 from web.sheets import note_sheet
 
 MC_PATHS = (50_000, 100_000, 200_000)
@@ -74,7 +74,12 @@ def _terms_card(spec: NoteSpec) -> dbc.Card:
                         ui.number(term("initial"), None, 1.0, placeholder="= spot today"),
                     )
                 ),
-                dbc.Col(ui.field("Issuer spread (bp)", ui.number(term("spread_bp"), 0.0, 10.0))),
+                dbc.Col(
+                    ui.field(
+                        "Funding spread (bp)",
+                        ui.number(term("spread_bp"), None, 5.0, placeholder="= market"),
+                    )
+                ),
             ],
             className="g-2",
         ),
@@ -101,7 +106,7 @@ def _terms_card(spec: NoteSpec) -> dbc.Card:
     fields.append(
         ui.note(
             "Levels in % of the initial level, amounts in % of the notional. The issuer's "
-            "credit spread discounts every cash flow of the note, not the underlying's drift."
+            "funding spread discounts every cash flow of the note, not the underlying's drift."
         )
     )
     return dbc.Card(dbc.CardBody([html.H5("Terms"), *fields]), className="terms-card")
@@ -283,7 +288,7 @@ def payoff_view(
     levels, rows = note_scenarios(position)
     notes: list[Any] = [
         html.H6("Paid at maturity", className="mt-2"),
-        ui.scenario_table("Underlying at maturity", levels, rows),
+        ui.scenario_table("Underlying at maturity", levels, rows, note_breakevens(position)),
         ui.note(
             "In % of the notional, against the underlying's final level in % of its initial "
             "level; the gain is on the price of the note today."

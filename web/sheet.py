@@ -46,7 +46,8 @@ td { border-top: 1px solid #dde3ec; padding: 6px 9px; text-align: center; }
 td.num { font-variant-numeric: tabular-nums; }
 td.pos { color: #1a9850; } td.neg { color: #d73027; }
 th.row { text-align: left; background: #f7f9fc; white-space: nowrap; }
-table.scenario { margin-bottom: 10px; }
+table.scenario { margin-bottom: 10px; min-width: 420px; }
+table.scenario tr.today td, table.scenario tr.today th { background: #e6edf6; }
 .columns { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
 .columns > div { flex: 1; min-width: 300px; }
 .note { color: #5b6577; font-size: 0.85em; text-align: center; margin: 8px auto 0;
@@ -87,24 +88,19 @@ def scenario_html(
     level_label: str,
     levels: Sequence[float],
     rows: Sequence[tuple[str, Sequence[float]]],
-    columns: int = 9,
 ) -> str:
-    """What is paid at a few final levels: one column per level (``columns`` per table)."""
-    out = []
-    for start in range(0, len(levels), columns):
-        chunk = slice(start, start + columns)
-        head = f"<th>{html.escape(level_label)}</th>" + "".join(
-            f"<th>{x:g} %</th>" for x in levels[chunk]
+    """What is paid at a few final levels: one line per level, one column per amount."""
+    head = f"<th>{html.escape(level_label)}</th>" + "".join(
+        f"<th>{html.escape(name)}</th>" for name, _ in rows
+    )
+    body = ""
+    for i, level in enumerate(levels):
+        cells = "".join(
+            _cell(float(values[i]), name.startswith(("P&L", "Gain"))) for name, values in rows
         )
-        body = ""
-        for name, values in rows:
-            signed = name.startswith(("P&L", "Gain"))
-            cells = "".join(_cell(float(v), signed) for v in list(values)[chunk])
-            body += f'<tr><th class="row">{html.escape(name)}</th>{cells}</tr>'
-        out.append(
-            f'<table class="scenario"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
-        )
-    return "".join(out)
+        today = ' class="today"' if level == 100.0 else ""
+        body += f'<tr{today}><th class="row">{level:g} %</th>{cells}</tr>'
+    return f'<table class="scenario"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
 
 
 # --- Chart -------------------------------------------------------------------------------------

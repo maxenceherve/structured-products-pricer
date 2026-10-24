@@ -31,6 +31,7 @@ def default_data() -> MarketData:
         "spot": DEFAULT_SPOT,
         "rate_pct": 100.0 * DEFAULT_RATE,
         "dividend_pct": 100.0 * DEFAULT_DIVIDEND_YIELD,
+        "funding_bp": 0.0,
         "strikes_pct": list(DEFAULT_STRIKES_PCT),
         "rows": grid_rows(DEFAULT_MATURITIES, DEFAULT_STRIKES_PCT, DEFAULT_VOLS),
     }
@@ -91,3 +92,12 @@ def market_from_data(data: MarketData) -> Market:
         vols=vols,
     )
     return Market(spot=spot, rate=rate, dividend_yield=dividend, vol=surface)
+
+
+def funding_bp(data: MarketData) -> float:
+    """Issuer's funding spread over the risk-free rate (bp): it discounts the notes' flows."""
+    try:
+        value = float(data.get("funding_bp") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if np.isfinite(value) else 0.0

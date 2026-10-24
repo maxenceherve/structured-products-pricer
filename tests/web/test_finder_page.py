@@ -1,11 +1,10 @@
-"""Product finder page: answers, ranked products, links to their pages, packaging."""
+"""Product finder page: answers, ranked products, links to their pages."""
 
 import json
 
-from spricer.finder import CARDS, Objective, Protection, View, VolView
+from spricer.finder import CARDS, Objective, Recommendation, View, VolView
 from web import finder_page as page
 from web import registry
-from web.market import default_data
 
 
 def text_of(component) -> str:
@@ -19,43 +18,43 @@ def test_every_card_links_to_a_page_of_the_site():
 
 def test_the_page_asks_every_question():
     text = text_of(page.finder_page())
-    for piece in ("finder-view", "finder-vol", "finder-horizon", "finder-protection"):
+    for piece in (
+        "finder-view",
+        "finder-vol",
+        "finder-horizon",
+        "finder-max-loss",
+        "finder-barrier",
+    ):
         assert piece in text
+    assert "packaging" not in text
 
 
 def test_results_rank_explain_and_link():
-    top, packaging = page.results(
-        View.MILD_BULL.value,
-        VolView.NEUTRAL.value,
-        3.0,
-        Protection.FULL.value,
-        Objective.GROWTH.value,
-        default_data(),
+    text = text_of(
+        page.results(
+            View.MILD_BULL.value, VolView.NEUTRAL.value, 3.0, 0, False, Objective.GROWTH.value
+        )
     )
-    text = text_of(top)
     assert "1. Shark note (up)" in text
     assert "/product/shark-note-up" in text
     assert f"Every product, ranked ({len(CARDS)})" in text
-    assert "Same payoff, different packaging" in text_of(packaging)
-    assert "Collateral" in text_of(packaging)
+    assert "ranking-table" in text
+    assert "ranking-out" in text  # products that can lose more than accepted are greyed out
+    assert "packaging" not in text
+
+
+def test_a_larger_loss_and_a_barrier_change_the_ranking():
+    buffer = text_of(page.results(View.MILD_BULL.value, None, 3.0, 90, False, None))
+    assert "Loss limited to 90 %" in buffer
+    barrier = text_of(page.results(View.RANGE.value, None, 3.0, 0, True, Objective.INCOME.value))
+    assert "1. Phoenix autocall" in barrier
 
 
 def test_defaults():
-    top, packaging = page.results(None, None, None, None, None, default_data())
-    assert "Products that fit" in text_of(top)
-    assert "packaging" in text_of(packaging)
-
-
-def test_invalid_market_data_are_reported():
-    _, packaging = page.results(
-        View.BULLISH.value, None, 1.0, None, None, default_data() | {"spot": -1.0}
-    )
-    assert "market data are invalid" in text_of(packaging)
+    assert "Products that fit" in text_of(page.results(None, None, None, None, None, None))
 
 
 def test_a_card_without_a_page_has_no_thumbnail(monkeypatch):
-    from spricer.finder import Recommendation
-
     card = CARDS[0]
     monkeypatch.setattr(registry, "find", lambda slug: None)
     rendered = page._recommendation(Recommendation(card, 3.0, ("ok",), ("careful",)), 1)

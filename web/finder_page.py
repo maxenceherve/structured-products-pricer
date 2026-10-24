@@ -1,8 +1,7 @@
 """Product finder: say what you expect and what you accept, get the products that fit.
 
 Every product of the site is scored with transparent rules (:mod:`spricer.finder`), each point
-explained; equivalent ways to build the same payoff (put-call parity) show what changes when
-one buys options or sells others with cash aside. An educational tool, not investment advice.
+explained. An educational tool, not investment advice.
 """
 
 from __future__ import annotations
@@ -13,11 +12,8 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import Input, Output, dcc, html
 
-from spricer.finder import Objective, Profile, Protection, Recommendation, View, VolView, recommend
-from spricer.packaging import Equivalence, equivalences
-from web import figures, registry, ui
-from web.market import MarketData, market_from_data
-from web.options import display_greeks
+from spricer.finder import Objective, Profile, Recommendation, View, VolView, recommend
+from web import registry, ui
 from web.thumbnails import payoff_data_uri
 
 TOP = 3
@@ -60,8 +56,22 @@ def finder_page() -> html.Div:
                 html.Hr(),
                 html.H5("What can you accept?"),
                 ui.field(
-                    "Capital protection",
-                    _choice("finder-protection", Protection, Protection.FULL.value),
+                    "Largest loss of capital you accept at maturity",
+                    dcc.Slider(
+                        id="finder-max-loss",
+                        min=0,
+                        max=100,
+                        step=5,
+                        value=0,
+                        marks={v: f"{v} %" for v in (0, 20, 40, 60, 80, 100)},
+                        tooltip={"placement": "bottom", "template": "{value} %"},
+                    ),
+                ),
+                dbc.Switch(
+                    id="finder-barrier",
+                    label="I accept a barrier: protected unless it is breached",
+                    value=False,
+                    className="mb-3",
                 ),
                 ui.field(
                     "You want", _choice("finder-objective", Objective, Objective.GROWTH.value)
@@ -78,8 +88,8 @@ def finder_page() -> html.Div:
             html.H1("Find a product", className="product-title mb-1"),
             html.P(
                 "Say what you expect and what you can accept: every product of the site is "
-                "ranked against your answers, each point explained, with equivalent ways to "
-                "build the payoff. An educational tool, not investment advice.",
+                "ranked against your answers, each point explained. An educational tool, not "
+                "investment advice.",
                 className="product-description",
             ),
             dbc.Row(
@@ -88,7 +98,6 @@ def finder_page() -> html.Div:
                     dbc.Col(dcc.Loading(html.Div(id="finder-results")), lg=8),
                 ]
             ),
-            html.Div(id="finder-packaging", className="mt-2"),
         ],
         className="product-page",
     )
@@ -161,57 +170,42 @@ def _recommendation(recommendation: Recommendation, rank: int) -> dbc.Card:
     )
 
 
-def _packaging(equivalence: Equivalence, data: MarketData, maturity: float) -> dbc.Card:
-    market = market_from_data(data)
-    rows = []
-    for construction in (equivalence.first, equivalence.second):
-        g = display_greeks(construction.strategy, market)
-        rows.append(
-            [
-                construction.name,
-                ui.fmt(construction.cash_today(market), 2),
-                ui.fmt(construction.option_premium(market), 2),
-                f"{construction.bond() / market.spot * 100.0:.2f}",
-                f"{construction.collateral(market):.2f}",
-                ui.fmt(g["Delta (%)"], 2),
-                ui.fmt(g["Gamma (%)"], 2),
-                ui.fmt(g["Vega (%)"], 3),
-            ]
+def _ranking(ranked: list[Recommendation]) -> html.Div:
+    """Every product with its points, as a table that scrolls sideways on small screens."""
+    head = html.Tr(
+        [html.Th(h) for h in ("#", "Product", "Family", "Fit", "Points", "Protection", "Pays")]
+    )
+    body = []
+    for rank, r in enumerate(ranked, start=1):
+        fit = max(0.0, min(1.0, r.score / MAX_SCORE))
+        body.append(
+            html.Tr(
+                [
+                    html.Td(rank, className="ranking-rank"),
+                    html.Td(
+                        dcc.Link(r.card.name, href=f"/product/{registry.slugify(r.card.name)}"),
+                        className="ranking-name",
+                    ),
+                    html.Td(r.card.page),
+                    html.Td(
+                        dbc.Progress(value=round(100 * fit), style={"height": "8px"}),
+                        className="ranking-fit",
+                    ),
+                    html.Td(ui.fmt(r.score, 1)),
+                    html.Td(r.card.protection_text),
+                    html.Td(r.card.objective.value),
+                ],
+                className="ranking-out" if r.score < 0 else "",
+            )
         )
-    return dbc.Card(
-        dbc.CardBody(
-            [
-                html.H5(equivalence.title),
-                ui.table(
-                    [
-                        "Construction",
-                        "Value today (%)",
-                        "Options (%)",
-                        "Bond at maturity (%)",
-                        "Collateral (%)",
-                        "Delta (%)",
-                        "Gamma (%)",
-                        "Vega (%)",
-                    ],
-                    rows,
-                ),
-                dcc.Graph(figure=figures.packaging_figure(equivalence, market.spot)),
-                ui.bullets(
-                    [
-                        f"**{equivalence.first.name}**: {equivalence.first.obligation}",
-                        f"**{equivalence.second.name}**: {equivalence.second.obligation}",
-                    ]
-                ),
-                dbc.Alert(equivalence.lesson, color="info", className="py-2"),
-                ui.note(
-                    f"Strikes around today's spot, {maturity:g} years. Same payoff, same value and "
-                    "same Greeks: only the cash flows and the obligations differ. Options: paid "
-                    "(+) or received (−). Collateral: the worst amount the option and stock legs "
-                    "can owe at maturity, covered by the bond leg when there is one."
-                ),
-            ]
+    return html.Div(
+        dbc.Table(
+            [html.Thead(head), html.Tbody(body)],
+            hover=True,
+            size="sm",
+            className="ranking-table",
         ),
-        className="mb-3",
+        className="ranking-wrap",
     )
 
 
@@ -219,80 +213,43 @@ def results(
     view: str | None,
     vol: str | None,
     horizon: float | None,
-    protection: str | None,
+    max_loss: float | None,
+    accept_barrier: bool | None,
     objective: str | None,
-    data: MarketData,
-) -> tuple[Any, Any]:
-    """The products that fit the answers, the full ranking, and equivalent constructions."""
+) -> Any:
+    """The products that fit the answers, and every product ranked."""
     profile = Profile(
         View(view or View.MILD_BULL.value),
-        Protection(protection or Protection.FULL.value),
+        float(max_loss or 0.0),
         Objective(objective or Objective.GROWTH.value),
         VolView(vol or VolView.NEUTRAL.value),
         float(horizon or 3.0),
+        bool(accept_barrier),
     )
     ranked = recommend(profile)
-    table = ui.table(
-        ["Product", "Family", "Points", "Protection", "Pays"],
-        [
-            [
-                dcc.Link(r.card.name, href=f"/product/{registry.slugify(r.card.name)}"),
-                r.card.page,
-                f"{r.score:+.1f}",
-                r.card.protection.value,
-                r.card.objective.value,
-            ]
-            for r in ranked
-        ],
-    )
-    top = html.Div(
+    return html.Div(
         [
             html.H5("Products that fit", className="mb-3"),
             *[_recommendation(r, i) for i, r in enumerate(ranked[:TOP], start=1)],
-            dbc.Accordion(
-                dbc.AccordionItem(
-                    [
-                        table,
-                        ui.note(
-                            "Points: up to 4 for the view, 1.5 for the objective, ±1 for "
-                            "volatility, +0.5/−1 for the horizon, −10 when the product protects "
-                            "less than asked."
-                        ),
-                    ],
-                    title=f"Every product, ranked ({len(ranked)})",
-                ),
-                start_collapsed=True,
+            html.H5(f"Every product, ranked ({len(ranked)})", className="mt-4 mb-2"),
+            _ranking(ranked),
+            ui.note(
+                "Points: up to 4 for the view, 1.5 for the objective, ±1 for volatility, "
+                "+0.5/−1 for the horizon, −0.5 for much more protection than needed, −10 when "
+                "the product can lose more than you accept (greyed out)."
             ),
         ]
     )
-    try:
-        pairs = equivalences(profile.view, market_from_data(data).spot, profile.horizon)
-    except ValueError as exc:
-        return top, ui.error(f"The market data are invalid: {exc}")
-    packaging = html.Div(
-        [
-            html.H4("Same payoff, different packaging", className="family-title mt-3"),
-            html.P(
-                "Put-call parity lets the same payoff be built by buying options or by selling "
-                "others with cash aside: the risk is identical, who pays and who must post "
-                "collateral is not.",
-                className="family-blurb",
-            ),
-            *[_packaging(e, data, profile.horizon) for e in pairs],
-        ]
-    )
-    return top, packaging
 
 
 def register(app: dash.Dash) -> None:
     """Register the callback of the finder."""
     app.callback(
         Output("finder-results", "children"),
-        Output("finder-packaging", "children"),
         Input("finder-view", "value"),
         Input("finder-vol", "value"),
         Input("finder-horizon", "value"),
-        Input("finder-protection", "value"),
+        Input("finder-max-loss", "value"),
+        Input("finder-barrier", "value"),
         Input("finder-objective", "value"),
-        Input("market-data", "data"),
     )(results)

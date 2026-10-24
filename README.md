@@ -18,9 +18,9 @@ with its standard error.
 ## What you can do
 
 The home page shows 56 products by family, each with the shape of its payoff; a search box
-and a product finder lead to them. The gear at the top right opens the market: spot, rates,
-dividends and the implied volatility grid, with its smile and no-arbitrage checks, shared by
-every page.
+and a product finder lead to them. The gear at the top right, or the market line at the top of
+every product page, opens the market: spot, rates, dividends, the issuer's funding spread and
+the implied volatility grid, with its smile and no-arbitrage checks, shared by every page.
 
 | Family | Products | On their page |
 |---|---|---|
@@ -33,10 +33,9 @@ every page.
 Every product has a printable product sheet: payoff chart, what is paid and the P&L at
 maturity with the breakevens, terms, Greeks, decomposition and main risks.
 
-The **product finder** asks for a market view, a volatility view, a horizon, the protection
-wanted and the kind of return, ranks every product with transparent rules (each point
-explained), and shows equivalent constructions of the same payoff: buying a call spread or
-selling a put spread gives the same payoff and Greeks, but not the same cash and collateral.
+The **product finder** asks for a market view, a volatility view, a horizon, the largest loss
+of capital accepted at maturity (and whether a barrier is acceptable) and the kind of return,
+then ranks every product with transparent rules, each point explained.
 
 ## Results, and where they come from
 
@@ -55,7 +54,7 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 | Hedging noise at equal volatilities | standard deviation 0.424 (daily) and 0.930 (weekly), Derman-Kamal 0.432 and 0.952 | notebook 03 |
 | Taylor P&L explain | residual third order (log-log slope 3.22), step-by-step attribution exact | notebook 03, `tests/test_risk_hedging.py` |
 | Every certificate and note is replicated by its bricks, and worth its expected payoff under the smile's density | payoff gap below 1e-9, value gap below 1e-6 relative | `tests/test_capital_protection.py`, `tests/test_participation.py` |
-| Quality | 1230 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
+| Quality | 1237 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
 
 | | |
 |---|---|
@@ -78,7 +77,7 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
   steps grow from daily to weekly; Richardson extrapolation; Brownian-bridge extremes for
   continuous barriers; antithetic variates, standard errors on independent pairs only.
 - **Notes as issuer liabilities.** Every cash flow is discounted at the rate plus the issuer's
-  credit spread, while the underlying keeps the risk-free drift. Redemption is at par; the
+  funding spread, while the underlying keeps the risk-free drift. Redemption is at par; the
   issue price only measures the margin.
 - **Decomposition on common paths.** The legs of a Monte Carlo product (coupons, redemptions,
   the down-and-in put sold) are valued on the same paths and add up to the price exactly.
@@ -108,7 +107,7 @@ src/spricer/
   packaging.py    equivalent constructions
 web/              Dash app: gallery, product pages, finder, product sheets
 notebooks/        validation, model risk, Greeks and hedging (with outputs)
-tests/            1230 tests
+tests/            1237 tests
 ```
 
 ## Install and run
@@ -147,7 +146,7 @@ uv run python scripts/build_notebooks.py
 - Dividends are a continuous yield; cash dividends would need an affine model.
 - The local volatility differentiates the smile twice: quotes rounded to 0.1 volatility point
   on closely spaced long-dated strikes create spikes, hence the 0.01-point default grid.
-- One currency, no quanto; the issuer's credit is a flat spread.
+- One currency, no quanto; the issuer's funding is a flat spread.
 - The product finder ranks the products of this app with transparent rules; it is a teaching
   tool, not a suitability assessment.
 

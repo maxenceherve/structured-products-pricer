@@ -35,21 +35,16 @@ class View(StrEnum):
 
 
 class Protection(StrEnum):
-    """Capital protection, from the safest to the riskiest."""
+    """How a product protects the capital."""
 
     FULL = "Full capital protection"
-    PARTIAL = "Partial protection (90 %)"
+    PARTIAL = "Partial protection"
     CONDITIONAL = "Protected unless a barrier is breached"
     NONE = "Capital at risk"
 
 
 PROTECTION_PENALTY = 10.0
-PROTECTION_RANK = {
-    Protection.FULL: 3,
-    Protection.PARTIAL: 2,
-    Protection.CONDITIONAL: 1,
-    Protection.NONE: 0,
-}
+MORE_THAN_NEEDED = 25.0  # % of capital: protection this much beyond the need costs return
 
 
 class Objective(StrEnum):
@@ -69,13 +64,24 @@ class VolView(StrEnum):
 
 @dataclass(frozen=True)
 class Profile:
-    """What the investor wants."""
+    """What the investor expects and accepts.
+
+    Attributes
+    ----------
+    view, objective, vol_view, horizon
+        Expected move, how to be paid, view on volatility, years.
+    max_loss
+        Largest loss of capital accepted at maturity, in % (0: full protection).
+    accept_barrier
+        A product protected only while a barrier holds is acceptable.
+    """
 
     view: View
-    protection: Protection
+    max_loss: float
     objective: Objective
     vol_view: VolView = VolView.NEUTRAL
     horizon: float = 3.0
+    accept_barrier: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +108,9 @@ class ProductCard:
         How the product makes money, in one sentence.
     risks
         What can go wrong, in one sentence.
+    partial_loss
+        For a partial protection, the largest loss of capital at maturity in % (with the
+        product's usual terms).
     """
 
     name: str
@@ -113,6 +122,23 @@ class ProductCard:
     horizon: tuple[float, float]
     how: str
     risks: str
+    partial_loss: float = 100.0
+
+    @property
+    def worst_loss(self) -> float:
+        """Largest loss of capital at maturity, in %, with the product's usual terms."""
+        if self.protection is Protection.FULL:
+            return 0.0
+        if self.protection is Protection.PARTIAL:
+            return self.partial_loss
+        return 100.0
+
+    @property
+    def protection_text(self) -> str:
+        """The protection in words, with its level."""
+        if self.protection is Protection.PARTIAL:
+            return f"Loss limited to {self.partial_loss:g} %"
+        return self.protection.value
 
 
 @dataclass(frozen=True)
@@ -273,6 +299,7 @@ CARDS: tuple[ProductCard, ...] = (
         (1.0, 5.0),
         "pays at least a bonus level if the barrier holds, plus a share of the rise",
         "below the barrier only the partial protection is left",
+        partial_loss=10.0,
     ),
     ProductCard(
         "Reverse convertible",
@@ -387,6 +414,7 @@ CARDS: tuple[ProductCard, ...] = (
         "the rise of the underlying, the capital back down to the airbag level, then a "
         "cushioned loss",
         "below the airbag level the loss grows, and the upside can be capped",
+        partial_loss=100.0,
     ),
     ProductCard(
         "Buffer certificate",
@@ -398,6 +426,7 @@ CARDS: tuple[ProductCard, ...] = (
         (1.0, 5.0),
         "the rise of the underlying, and the first losses absorbed down to the buffer",
         "below the buffer the loss is one for one",
+        partial_loss=90.0,
     ),
     ProductCard(
         "Sprint certificate",
@@ -495,18 +524,32 @@ def _score(card: ProductCard, profile: Profile) -> Recommendation:
     elif fit > 0.0:
         reasons.append(f"Partly fits a {profile.view.value.lower()} view: it {card.how}.")
 
-    wanted, offered = PROTECTION_RANK[profile.protection], PROTECTION_RANK[card.protection]
-    if offered < wanted:
+    loss, accepted = card.worst_loss, profile.max_loss
+    if loss <= accepted + 1e-9:
+        if loss < accepted - MORE_THAN_NEEDED:
+            score -= 0.5
+            reasons.append(
+                f"Loses at most {loss:g} % of the capital: more protection than you need, paid "
+                "for with some return."
+            )
+        elif loss >= 100.0:
+            reasons.append("Capital at risk, as you accept.")
+        else:
+            reasons.append(
+                f"Loses at most {loss:g} % of the capital, within the {accepted:g} % you accept."
+            )
+    elif card.protection is Protection.CONDITIONAL and profile.accept_barrier:
+        reasons.append("Capital protected unless the barrier is breached, as you accept.")
+    else:
         score -= PROTECTION_PENALTY
         warnings.append(
-            f"Protects less than you asked: {card.protection.value.lower()} instead of "
-            f"{profile.protection.value.lower()}."
+            f"Can lose up to {loss:g} % of the capital, more than the {accepted:g} % you accept"
+            + (
+                " (protected only while the barrier holds)."
+                if card.protection is Protection.CONDITIONAL
+                else "."
+            )
         )
-    elif offered > wanted:
-        score -= 0.5
-        reasons.append(f"{card.protection.value}: more than you need, paid for with some return.")
-    else:
-        reasons.append(f"{card.protection.value}, as you asked.")
 
     if card.objective is profile.objective:
         score += 1.5
@@ -547,6 +590,8 @@ def recommend(profile: Profile, top: int | None = None) -> list[Recommendation]:
     """Every product scored against ``profile``, best first (ties keep the catalog order)."""
     if not profile.horizon > 0.0:
         raise ValueError("the horizon must be positive")
+    if not 0.0 <= profile.max_loss <= 100.0:
+        raise ValueError("the largest loss accepted must be between 0 and 100 %")
     ranked = sorted((_score(c, profile) for c in CARDS), key=lambda r: -r.score)
     return ranked if top is None else ranked[:top]
 

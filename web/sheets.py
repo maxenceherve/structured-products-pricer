@@ -16,7 +16,13 @@ from web.coupons import CouponTerms, legs_rows, schedule_rows
 from web.notes import NotePosition, decomposition, desk_greeks, shown_params
 from web.options import Position, display_greeks
 from web.options import decomposition as option_legs
-from web.scenarios import breakevens, coupon_scenarios, note_scenarios, option_scenarios
+from web.scenarios import (
+    coupon_scenarios,
+    note_breakevens,
+    note_scenarios,
+    option_breakevens,
+    option_scenarios,
+)
 from web.sheet import ACCENT, GUIDE, PRIMARY, Chart, Sheet
 
 SCHEDULE_HEADER = [
@@ -51,19 +57,12 @@ def option_sheet(position: Position) -> Sheet:
     """Sheet of an option position."""
     market, strategy = position.market, position.strategy
     levels, rows = option_scenarios(position)
-    pnl = rows[-1] if len(rows) == 2 else rows[2]
     price = position.price_pct()
     x = np.linspace(50.0, 150.0, 401)
     spots = x / 100.0 * market.spot
     growth = float(np.exp(market.rate * position.maturity))
     paid = 100.0 * np.asarray(strategy.payoff(spots), dtype=float) / market.spot
     holds = any(isinstance(leg.brick, Underlying) for leg in strategy.legs)
-    if len(rows) == 2:  # on a fine grid: a payoff that jumps crosses zero at its jump
-        fine = np.linspace(50.0, 150.0, 20001)
-        fine_paid = np.asarray(strategy.payoff(fine / 100.0 * market.spot), dtype=float)
-        crossings = breakevens(list(fine), list(100.0 * fine_paid / market.spot - price * growth))
-    else:  # barrier observed along the path: if never touched
-        crossings = breakevens(levels, pnl[1])
     chart = Chart(
         x,
         [
@@ -118,7 +117,7 @@ def option_sheet(position: Position) -> Sheet:
         ],
         chart,
         ("Spot at maturity", levels, rows),
-        crossings,
+        option_breakevens(position),
         terms,
         _greek_rows(display_greeks(strategy, market)),
         [("Legs", (["Leg", "Terms", "Price (%)"], legs))],
@@ -133,7 +132,6 @@ def note_sheet(position: NotePosition) -> Sheet:
     price, bond = position.value(), position.bond_pct()
     top = max(160.0, 1.2 * max(lv.value_pct for lv in note.levels))
     x = np.linspace(0.0, top, 481)
-    fine = np.linspace(0.0, top, 40001)
     paid = np.asarray(note.payoff(x), dtype=float)
     series = [("Paid at maturity", paid, PRIMARY)]
     if spec not in SHARK_WARRANTS:
@@ -153,7 +151,7 @@ def note_sheet(position: NotePosition) -> Sheet:
         ("Maturity", _years(position.maturity)),
         ("Initial level", f"{note.initial:,.2f}"),
         ("Barrier observation", _OBSERVATION[position.monitoring]),
-        ("Issuer spread", f"{1e4 * position.spread:g} bp"),
+        ("Funding spread", f"{1e4 * position.spread:g} bp"),
     ]
     figures = [("Price", f"{price:.2f} %", "of notional")]
     if bond:
@@ -180,7 +178,7 @@ def note_sheet(position: NotePosition) -> Sheet:
         figures,
         chart,
         ("Underlying at maturity", levels, rows),
-        breakevens(list(fine), list(np.asarray(note.payoff(fine), dtype=float) - price)),
+        note_breakevens(position),
         terms,
         _greek_rows(desk_greeks(position.greeks(), position.market.spot)),
         [("Brick decomposition", (["Leg", "Terms", "Price (%)"], legs))],

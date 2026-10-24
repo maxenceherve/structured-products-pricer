@@ -76,8 +76,9 @@ def market_panel(data: MarketData) -> dbc.Offcanvas:
     return dbc.Offcanvas(
         [
             html.P(
-                "One market for the whole site: today's spot, rates and the implied volatility "
-                "grid (strikes in % of spot, volatilities in points).",
+                "One market for the whole site: today's spot, rates, the issuer's funding "
+                "spread over the risk-free rate (it discounts the notes' cash flows) and the "
+                "implied volatility grid (strikes in % of spot, volatilities in points).",
                 className="text-muted small",
             ),
             dbc.Row(
@@ -86,6 +87,11 @@ def market_panel(data: MarketData) -> dbc.Offcanvas:
                     dbc.Col(_number_input("Rate (%)", "market-rate", data["rate_pct"], 0.25)),
                     dbc.Col(
                         _number_input("Dividend (%)", "market-dividend", data["dividend_pct"], 0.25)
+                    ),
+                    dbc.Col(
+                        _number_input(
+                            "Funding (bp)", "market-funding", data.get("funding_bp", 0.0), 5.0
+                        )
                     ),
                 ],
                 className="g-2 mb-3",

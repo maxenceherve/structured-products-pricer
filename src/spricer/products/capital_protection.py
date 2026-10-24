@@ -349,34 +349,43 @@ def bonus_note(
 def twin_win_note(
     *,
     protection: float,
-    strike: float,
+    call_strike: float,
     participation_up: float,
     cap: float,
+    put_strike: float,
     participation_down: float,
     floor: float,
     maturity: float,
     initial: float,
 ) -> Note:
-    """Gains when the underlying moves away from ``strike``, up to ``cap`` or down to ``floor``."""
-    _positive(protection=protection, strike=strike, cap=cap, floor=floor)
+    """Gains above ``call_strike`` up to ``cap``, and below ``put_strike`` down to ``floor``.
+
+    The two strikes can differ: between them the note pays only the protection.
+    """
+    _positive(
+        protection=protection, call_strike=call_strike, put_strike=put_strike, cap=cap, floor=floor
+    )
     _non_negative(participation_up=participation_up, participation_down=participation_down)
-    if not floor < strike < cap:
-        raise ValueError("levels must satisfy floor < strike < cap")
+    if not call_strike < cap:
+        raise ValueError("the cap must be above the call strike")
+    if not floor < put_strike:
+        raise ValueError("the downside limit (floor) must be below the put strike")
     b = _Builder(initial, maturity)
     b.bond("Zero-coupon bond", protection)
-    b.option("Long call (upside)", "call", strike, participation_up)
+    b.option("Long call (upside)", "call", call_strike, participation_up)
     b.option("Short call (upside cap)", "call", cap, -participation_up)
-    b.option("Long put (downside)", "put", strike, participation_down)
+    b.option("Long put (downside)", "put", put_strike, participation_down)
     b.option("Short put (downside limit)", "put", floor, -participation_down)
 
     def formula(p: FloatArray) -> FloatArray:
-        up = participation_up / 100.0 * np.minimum(np.maximum(p - strike, 0.0), cap - strike)
-        down = participation_down / 100.0 * np.minimum(np.maximum(strike - p, 0.0), strike - floor)
+        up = participation_up / 100.0 * np.clip(p - call_strike, 0.0, cap - call_strike)
+        down = participation_down / 100.0 * np.clip(put_strike - p, 0.0, put_strike - floor)
         return protection + up + down
 
     levels = (
         Level("Capital protection", protection, LevelKind.PAYOFF),
-        Level("Long call and put strike", strike, LevelKind.PERFORMANCE),
+        Level("Long call strike", call_strike, LevelKind.PERFORMANCE),
+        Level("Long put strike", put_strike, LevelKind.PERFORMANCE),
         Level("Short call strike (cap)", cap, LevelKind.PERFORMANCE),
         Level("Short put strike (downside limit)", floor, LevelKind.PERFORMANCE),
     )
@@ -573,18 +582,21 @@ NOTE_CATALOG: tuple[NoteSpec, ...] = (
     ),
     NoteSpec(
         "Twin-win note",
-        "Capital protected, gains when the underlying moves away from the strike, either way.",
+        "Capital protected, gains when the underlying rises above the call strike or falls "
+        "below the put strike.",
         (
             PROTECTION,
-            NoteParam("strike", "Long call and put strike", 100.0),
+            NoteParam("call_strike", "Call strike", 100.0, "The upside starts above it."),
             NoteParam("participation_up", "Upside participation", 100.0),
             NoteParam("cap", "Upside cap (short call strike)", 130.0),
+            NoteParam("put_strike", "Put strike", 100.0, "The downside gain starts below it."),
             NoteParam("participation_down", "Downside participation", 100.0),
             NoteParam("floor", "Downside limit (short put strike)", 70.0),
         ),
         lambda v, t, s0, mon, obs: twin_win_note(
             protection=v["protection"],
-            strike=v["strike"],
+            call_strike=v["call_strike"],
+            put_strike=v["put_strike"],
             participation_up=v["participation_up"],
             cap=v["cap"],
             participation_down=v["participation_down"],

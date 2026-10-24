@@ -93,7 +93,7 @@ def test_terms_build_the_note():
     [
         ({"maturity": None}, "maturity must be a number"),
         ({"issue_price": 0.0}, "issue price must be positive"),
-        ({"spread_bp": -1.0}, "credit spread must be non-negative"),
+        ({"spread_bp": -1.0}, "funding spread must be non-negative"),
         ({"coupon_pa": "x"}, "Coupon"),
         ({"elapsed": -1.0}, "years since issue"),
     ],

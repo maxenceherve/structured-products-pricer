@@ -18,6 +18,7 @@ from web.market import (
     MATURITY,
     MarketData,
     default_data,
+    funding_bp,
     market_from_data,
 )
 from web.notes import NotePosition
@@ -44,22 +45,30 @@ def route(pathname: str | None, query: str | None) -> Any:
     return layout.not_found(path)
 
 
-def toggle(n_clicks: int | None, is_open: bool) -> bool:
-    """Open or close the market panel."""
-    return not is_open if n_clicks else is_open
+def toggle(n_clicks: int | None, link_clicks: list[int | None] | None, is_open: bool) -> bool:
+    """Open or close the market panel: the gear, or a link to it on a product page."""
+    clicked = bool(n_clicks) or any(link_clicks or [])
+    return not is_open if clicked else is_open
 
 
 def apply_edits(
     spot: float | None,
     rate_pct: float | None,
     dividend_pct: float | None,
+    funding: float | None,
     edits: list[dict[str, Any]] | None,
     data: MarketData,
 ) -> MarketData:
     """Session market data after the panel's inputs and grid edits (others unchanged)."""
     out = dict(data)
     out["rows"] = [dict(r) for r in data["rows"]]
-    for key, value in (("spot", spot), ("rate_pct", rate_pct), ("dividend_pct", dividend_pct)):
+    values = (
+        ("spot", spot),
+        ("rate_pct", rate_pct),
+        ("dividend_pct", dividend_pct),
+        ("funding_bp", funding),
+    )
+    for key, value in values:
         if value is not None:
             out[key] = value
     for edit in edits or []:
@@ -78,14 +87,31 @@ def market_view(data: MarketData) -> tuple[Any, go.Figure]:
     return layout.market_status(market, None), layout.smile_figure(market)
 
 
-def panel_values(data: MarketData) -> tuple[float, float, float, list[dict[str, Any]]]:
+PanelValues = tuple[float, float, float, float, list[dict[str, Any]]]
+
+
+def panel_values(data: MarketData) -> PanelValues:
     """Values shown by the panel for the session market."""
-    return data["spot"], data["rate_pct"], data["dividend_pct"], data["rows"]
+    return data["spot"], data["rate_pct"], data["dividend_pct"], funding_bp(data), data["rows"]
 
 
-def sync_panel(_: bool, data: MarketData) -> tuple[float, float, float, list[dict[str, Any]]]:
+def sync_panel(_: bool, data: MarketData) -> PanelValues:
     """Fill the panel from the session market when it opens."""
     return panel_values(data)
+
+
+def market_summary(data: MarketData) -> str:
+    """The session market in one line, shown on every product page."""
+    try:
+        market = market_from_data(data)
+    except ValueError as exc:
+        return f"Market data invalid: {exc}"
+    atm = 100.0 * float(market.vol.vol(market.spot, 1.0))
+    return (
+        f"Market: spot {market.spot:,.2f} · rate {100 * market.rate:.2f} % · dividend "
+        f"{100 * market.dividend_yield:.2f} % · funding spread {funding_bp(data):g} bp · "
+        f"ATM volatility 1y {atm:.2f} %"
+    )
 
 
 def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
@@ -139,14 +165,17 @@ def create_app() -> dash.Dash:
     app.callback(
         Output("market-panel", "is_open"),
         Input("market-button", "n_clicks"),
+        Input({"type": "open-market", "where": ALL}, "n_clicks"),
         State("market-panel", "is_open"),
         prevent_initial_call=True,
     )(toggle)
+    app.callback(Output("market-summary", "children"), Input("market-data", "data"))(market_summary)
     app.callback(
         Output("market-data", "data"),
         Input("market-spot", "value"),
         Input("market-rate", "value"),
         Input("market-dividend", "value"),
+        Input("market-funding", "value"),
         Input("vol-grid", "cellValueChanged"),
         State("market-data", "data"),
         prevent_initial_call=True,
@@ -156,6 +185,7 @@ def create_app() -> dash.Dash:
         Output("market-spot", "value"),
         Output("market-rate", "value"),
         Output("market-dividend", "value"),
+        Output("market-funding", "value"),
         Output("vol-grid", "rowData"),
         Input("market-reset", "n_clicks"),
         prevent_initial_call=True,
@@ -164,6 +194,7 @@ def create_app() -> dash.Dash:
         Output("market-spot", "value", allow_duplicate=True),
         Output("market-rate", "value", allow_duplicate=True),
         Output("market-dividend", "value", allow_duplicate=True),
+        Output("market-funding", "value", allow_duplicate=True),
         Output("vol-grid", "rowData", allow_duplicate=True),
         Input("market-panel", "is_open"),
         State("market-data", "data"),

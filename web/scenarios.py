@@ -88,3 +88,28 @@ def breakevens(levels: list[float], values: list[float]) -> list[float]:
     x, y = np.array(levels), np.array(values)
     keep = ~np.isnan(y)
     return crossings(x[keep], y[keep])
+
+
+def option_breakevens(position: Position) -> list[float]:
+    """Spots (% of today) where the P&L at maturity crosses zero.
+
+    On a fine grid, so that a payoff that jumps (a digital) crosses zero at its jump; for a
+    barrier observed along the path, the P&L if the barrier was never touched.
+    """
+    levels, rows = option_scenarios(position)
+    if len(rows) > 2:
+        return breakevens(levels, rows[2][1])
+    market, strategy = position.market, position.strategy
+    growth = float(np.exp(market.rate * strategy.maturity))
+    fine = np.linspace(50.0, 150.0, 20001)
+    paid = 100.0 * np.asarray(strategy.payoff(fine / 100.0 * market.spot), dtype=float)
+    return breakevens(list(fine), list(paid / market.spot - position.price_pct() * growth))
+
+
+def note_breakevens(position: NotePosition) -> list[float]:
+    """Final levels (% of initial) where what the note pays equals its price today."""
+    note = position.note
+    top = max(160.0, 1.2 * max(lv.value_pct for lv in note.levels))
+    fine = np.linspace(0.0, top, 40001)
+    gain = np.asarray(note.payoff(fine), dtype=float) - position.value()
+    return breakevens(list(fine), list(gain))

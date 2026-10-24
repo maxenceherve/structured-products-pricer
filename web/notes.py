@@ -47,7 +47,7 @@ def default_terms(spec: NoteSpec) -> Terms:
         "maturity": 3.0 if spec not in SHARK_WARRANTS else 1.0,
         "notional": 1_000_000.0,
         "initial": None,
-        "spread_bp": 0.0,
+        "spread_bp": None,  # the market's funding spread
         "monitoring": "european",
     }
     for p in spec.params:
@@ -81,7 +81,7 @@ class NotePosition:
     spec: NoteSpec
     note: Note
     market: Market
-    spread: float  # issuer credit spread, a rate
+    spread: float  # issuer's funding spread over the risk-free rate, a rate
     notional: float
     values: dict[str, float]
     monitoring: Monitoring
@@ -151,8 +151,11 @@ class NotePosition:
         return None
 
 
-def build_note(spec: NoteSpec, terms: Terms, market: Market) -> NotePosition:
-    """The note the terms describe, on ``market``; ValueError with a readable message."""
+def build_note(spec: NoteSpec, terms: Terms, market: Market, funding: float = 0.0) -> NotePosition:
+    """The note the terms describe, on ``market``; ValueError with a readable message.
+
+    The funding spread (bp) discounts the note's cash flows unless the terms set their own.
+    """
     maturity = _number(terms, "maturity", "The maturity")
     notional = _number(terms, "notional", "The notional")
     initial_term = terms.get("initial")
@@ -161,7 +164,12 @@ def build_note(spec: NoteSpec, terms: Terms, market: Market) -> NotePosition:
         if initial_term in (None, "")
         else _number(terms, "initial", "The initial level")
     )
-    spread = _number(terms, "spread_bp", "The credit spread", positive=False) / 1e4
+    typed = terms.get("spread_bp")
+    spread = (
+        funding
+        if typed in (None, "")
+        else _number(terms, "spread_bp", "The funding spread", positive=False)
+    ) / 1e4
     values: dict[str, float] = {}
     for p in spec.params:
         if p.kind == "toggle":

@@ -154,9 +154,10 @@ def test_routes():
 
 
 def test_the_panel_opens_and_closes():
-    assert toggle(1, False) is True
-    assert toggle(2, True) is False
-    assert toggle(None, True) is True
+    assert toggle(1, [], False) is True
+    assert toggle(2, None, True) is False
+    assert toggle(None, [None], True) is True
+    assert toggle(None, [1], False) is True  # the link on a product page
 
 
 def test_edits_update_a_copy_of_the_market():
@@ -167,18 +168,33 @@ def test_edits_update_a_copy_of_the_market():
         {"rowIndex": 99, "colId": field, "value": 1.0},
         {"rowIndex": "x", "colId": field, "value": 1.0},
     ]
-    out = apply_edits(110.0, None, 1.5, edits, data)
+    out = apply_edits(110.0, None, 1.5, 25.0, edits, data)
     assert out["spot"] == 110.0
     assert out["rate_pct"] == data["rate_pct"]
     assert out["dividend_pct"] == 1.5
     assert out["rows"][0][field] == 25.0
     assert data["rows"][0][field] != 25.0  # the stored data is not mutated
-    assert apply_edits(None, None, None, None, data) == data
+    assert out["funding_bp"] == 25.0
+    assert apply_edits(None, None, None, None, None, data) == data
     assert panel_values(out)[0] == 110.0
     assert sync_panel(True, out)[0] == 110.0
     fresh = reset(1)
     assert fresh[0] == default_data()
     assert fresh[1] == 100.0
+    assert fresh[4] == 0.0
+
+
+def test_the_market_summary_and_the_funding_spread():
+    from web.app import market_summary
+    from web.market import funding_bp
+
+    text = market_summary(default_data() | {"funding_bp": 40.0})
+    assert "funding spread 40 bp" in text
+    assert "ATM volatility 1y" in text
+    assert "invalid" in market_summary(default_data() | {"spot": None})
+    assert funding_bp({"funding_bp": "x"}) == 0.0
+    assert funding_bp({"funding_bp": float("inf")}) == 0.0
+    assert funding_bp({}) == 0.0
 
 
 def test_market_view_reports_status_and_smile():
@@ -200,7 +216,7 @@ def test_the_app_builds_with_every_piece():
     text = text_of(app.layout)
     for piece in ("market-panel", "vol-grid", "search", "market-button", "page"):
         assert piece in text
-    assert len(app.callback_map) == 37
+    assert len(app.callback_map) == 38
     assert isinstance(layout.not_found("/x"), html.Div)
 
 

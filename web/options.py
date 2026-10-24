@@ -101,7 +101,7 @@ class OptionSetup:
             terms["payout"] = 10.0
         if self.barrier_type is not None:
             terms["barrier"] = self.product.marker
-            terms["monitoring"] = "continuous"
+            terms["monitoring"] = "european"
         return terms
 
 

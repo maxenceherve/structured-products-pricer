@@ -11,7 +11,6 @@ from plotly.subplots import make_subplots
 from spricer._typing import FloatArray
 from spricer.bricks import BarrierOption
 from spricer.monitoring import Monitoring
-from spricer.packaging import Equivalence
 from spricer.products.coupon_notes import CouponNote
 from spricer.products.notes import LevelKind, Note
 from spricer.strategies import Strategy
@@ -608,31 +607,4 @@ def call_probability_figure(note: CouponNote, calls_pct: list[float]) -> go.Figu
         yaxis_title="Probability (%)",
         yaxis_range=[0.0, 100.0],
         legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 1.0, "xanchor": "right"},
-    )
-
-
-def packaging_figure(equivalence: Equivalence, spot: float) -> go.Figure:
-    """Payoffs at maturity of both constructions of a pair: the two lines coincide."""
-    grid = np.linspace(0.0, 2.0 * spot, 401)
-    fig = go.Figure()
-    for construction, line in (
-        (equivalence.first, {"color": PRIMARY, "width": 5}),
-        (equivalence.second, {"color": SHORT_COLORS[1], "width": 2, "dash": "dash"}),
-    ):
-        fig.add_trace(
-            go.Scatter(
-                x=100.0 * grid / spot,
-                y=100.0 * np.asarray(construction.strategy.payoff(grid)) / spot,
-                name=construction.name,
-                mode="lines",
-                line=line,
-            )
-        )
-    return _style(
-        fig,
-        340,
-        xaxis_title="Underlying at maturity (% of today)",
-        yaxis_title="Paid (% of today's spot)",
-        legend={"orientation": "h", "y": 1.0, "yanchor": "bottom", "x": 0.0},
-        hovermode="x unified",
     )

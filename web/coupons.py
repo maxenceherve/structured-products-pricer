@@ -54,7 +54,7 @@ def default_terms(spec: CouponNoteSpec) -> Terms:
         "frequency": "Quarterly",
         "issue_price": 100.0,
         "notional": 1_000_000.0,
-        "spread_bp": 0.0,
+        "spread_bp": None,  # the market's funding spread
         "monitoring": "european",
         "elapsed": 0.0,
         "memory_accrued": 0.0,
@@ -95,13 +95,21 @@ class CouponTerms:
         return self.spec.build(values, self.maturity, self.frequency, self.monitoring, self.state)
 
 
-def build_coupon(spec: CouponNoteSpec, terms: Terms) -> CouponTerms:
-    """The coupon note the terms describe; ValueError with a readable message."""
+def build_coupon(spec: CouponNoteSpec, terms: Terms, funding: float = 0.0) -> CouponTerms:
+    """The coupon note the terms describe; ValueError with a readable message.
+
+    The funding spread (bp) discounts the note's cash flows unless the terms set their own.
+    """
     maturity = _number(terms, "maturity", "The maturity")
     frequency = FREQUENCIES.get(str(terms.get("frequency")), 4)
     issue_price = _number(terms, "issue_price", "The issue price")
     notional = _number(terms, "notional", "The notional")
-    spread = _number(terms, "spread_bp", "The credit spread", positive=False) / 1e4
+    typed = terms.get("spread_bp")
+    spread = (
+        funding
+        if typed in (None, "")
+        else _number(terms, "spread_bp", "The funding spread", positive=False)
+    ) / 1e4
     values: dict[str, float] = {}
     for p in spec.params:
         if p.kind == "toggle":
