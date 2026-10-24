@@ -227,3 +227,23 @@ def test_a_flat_market_has_no_smile_to_draw():
     assert len(figure.data) == 0
     status = layout.market_status(Market(100.0, 0.03, 0.02, FlatVol(0.2)), None)
     assert "No static arbitrage" in text_of(status)
+
+
+def test_the_finder_answers_prefill_the_product_pages():
+    from web import ui
+
+    assert ui.prefill("?maturity=2&protection=80&x=1&buffer=abc&notional=-5") == {
+        "maturity": 2.0,
+        "protection": 80.0,
+    }
+    assert ui.prefill(None) == {}
+    note = text_of(route("/product/participation-note", None, "?maturity=2&protection=80"))
+    assert "Set from your answers in the finder: maturity 2 years, capital protection 80 %" in note
+    buffer = text_of(route("/product/buffer-certificate", None, "?buffer=75&protection=25"))
+    assert "buffer level 75 %" in buffer
+    assert "capital protection" not in buffer  # the buffer certificate has no protection term
+    option = text_of(route("/product/call", None, "?maturity=2"))
+    assert "maturity 2 years" in option
+    coupon = text_of(route("/product/phoenix-autocall", None, "?maturity=2"))
+    assert "maturity 2 years" in coupon
+    assert "Set from your answers" not in text_of(route("/product/call", None, None))

@@ -255,13 +255,16 @@ def gallery(query: str | None = None) -> html.Div:
 # --- Product page ------------------------------------------------------------------------------
 
 
-def product_page(product: Product) -> html.Div:
-    """Product page: terms on the left, results in tabs on the right."""
+def product_page(product: Product, prefilled: dict[str, float] | None = None) -> html.Div:
+    """Product page: terms on the left, results in tabs on the right.
+
+    ``prefilled`` holds terms set by the finder (maturity, protection...).
+    """
     if setup_of(product) is not None:
-        return option_page(product)
+        return option_page(product, prefilled)
     if note_spec(product) is not None:
-        return note_page(product)
-    return coupon_page(product)
+        return note_page(product, prefilled)
+    return coupon_page(product, prefilled)
 
 
 def not_found(path: str) -> html.Div:

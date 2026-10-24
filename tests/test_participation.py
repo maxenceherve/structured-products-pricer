@@ -209,3 +209,31 @@ def test_catalog_names_are_unique_and_found():
     assert len(names) == len(set(names))
     with pytest.raises(KeyError):
         pc.find_certificate("Unknown")
+
+
+def _legs(name, values=None):
+    note = pc.find_certificate(name).build(values or {}, T, INITIAL)
+    return [(leg.role.split(" (")[0], round(leg.quantity * INITIAL, 6)) for leg in note.legs]
+
+
+def test_the_usual_decompositions():
+    """As issuers describe them: a zero-strike call plus down-and-out puts."""
+    zero_strike = ("Zero-strike call", 100.0)
+    # twin-win: the underlying and two down-and-out puts at the strike
+    assert _legs("Twin-win certificate") == [zero_strike, ("Long puts down-and-out", 200.0)]
+    # bonus: the underlying and a down-and-out put at the bonus level
+    assert _legs("Bonus certificate") == [zero_strike, ("Long put down-and-out", 100.0)]
+    # barrier outperformance: extra calls, and a down-and-out put giving the capital back
+    assert _legs("Barrier outperformance certificate") == [
+        zero_strike,
+        ("Long call", 30.0),
+        ("Long put down-and-out", 100.0),
+    ]
+    # discount: the underlying less a call at the cap
+    assert _legs("Discount certificate") == [zero_strike, ("Short call", -100.0)]
+    # sprint at 200 %: one more call at the strike, two sold at the cap
+    assert _legs("Sprint certificate") == [
+        zero_strike,
+        ("Long call", 100.0),
+        ("Short call", -200.0),
+    ]

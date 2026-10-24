@@ -7,6 +7,7 @@ explained. An educational tool, not investment advice.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlencode
 
 import dash
 import dash_bootstrap_components as dbc
@@ -106,7 +107,22 @@ def finder_page() -> html.Div:
 # --- Pure functions behind the callback ----------------------------------------------------------
 
 
-def _recommendation(recommendation: Recommendation, rank: int) -> dbc.Card:
+def product_link(name: str, profile: Profile) -> str:
+    """Address of a product's page with the answers that set its terms.
+
+    The horizon sets the maturity; the largest loss accepted sets the capital protection of a
+    protected note (100 % minus the loss) and the level of a buffer (the loss itself). A page
+    applies only the terms its product has.
+    """
+    terms: dict[str, float] = {"maturity": profile.horizon}
+    if profile.max_loss < 100.0:
+        terms["protection"] = 100.0 - profile.max_loss
+    if 0.0 < profile.max_loss < 100.0:
+        terms["buffer"] = profile.max_loss
+    return f"/product/{registry.slugify(name)}?{urlencode(terms)}"
+
+
+def _recommendation(recommendation: Recommendation, rank: int, href: str) -> dbc.Card:
     card = recommendation.card
     product = registry.find(registry.slugify(card.name))
     fit = max(0.0, min(1.0, recommendation.score / MAX_SCORE))
@@ -158,7 +174,7 @@ def _recommendation(recommendation: Recommendation, rank: int) -> dbc.Card:
                                     size="sm",
                                     className="mt-2",
                                 ),
-                                href=f"/product/{registry.slugify(card.name)}",
+                                href=href,
                             ),
                         ],
                         md=9,
@@ -170,7 +186,7 @@ def _recommendation(recommendation: Recommendation, rank: int) -> dbc.Card:
     )
 
 
-def _ranking(ranked: list[Recommendation]) -> html.Div:
+def _ranking(ranked: list[Recommendation], profile: Profile) -> html.Div:
     """Every product with its points, as a table that scrolls sideways on small screens."""
     head = html.Tr(
         [html.Th(h) for h in ("#", "Product", "Family", "Fit", "Points", "Protection", "Pays")]
@@ -183,7 +199,7 @@ def _ranking(ranked: list[Recommendation]) -> html.Div:
                 [
                     html.Td(rank, className="ranking-rank"),
                     html.Td(
-                        dcc.Link(r.card.name, href=f"/product/{registry.slugify(r.card.name)}"),
+                        dcc.Link(r.card.name, href=product_link(r.card.name, profile)),
                         className="ranking-name",
                     ),
                     html.Td(r.card.page),
@@ -230,9 +246,12 @@ def results(
     return html.Div(
         [
             html.H5("Products that fit", className="mb-3"),
-            *[_recommendation(r, i) for i, r in enumerate(ranked[:TOP], start=1)],
+            *[
+                _recommendation(r, i, product_link(r.card.name, profile))
+                for i, r in enumerate(ranked[:TOP], start=1)
+            ],
             html.H5(f"Every product, ranked ({len(ranked)})", className="mt-4 mb-2"),
-            _ranking(ranked),
+            _ranking(ranked, profile),
             ui.note(
                 "Points: up to 4 for the view, 1.5 for the objective, ±1 for volatility, "
                 "+0.5/−1 for the horizon, −0.5 for much more protection than needed, −10 when "

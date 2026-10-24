@@ -51,8 +51,7 @@ GREEK_PERF = np.linspace(40.0, 180.0, 141)
 # --- Layout ------------------------------------------------------------------------------------
 
 
-def _terms_card(spec: NoteSpec) -> dbc.Card:
-    terms = default_terms(spec)
+def _terms_card(spec: NoteSpec, terms: dict[str, Any]) -> dbc.Card:
     term = ui.term
     fields: list[Any] = [
         dbc.Row(
@@ -90,7 +89,7 @@ def _terms_card(spec: NoteSpec) -> dbc.Card:
     for p in spec.params:
         if p.kind == "toggle":
             continue
-        control: Any = ui.number(term(p.key), p.default, 1.0)
+        control: Any = ui.number(term(p.key), terms[p.key], 1.0)
         toggle = toggles.get(TOGGLED.get(p.key, ""))
         if toggle is not None:
             control = html.Div(
@@ -192,14 +191,16 @@ def _tab_solve(spec: NoteSpec) -> html.Div:
     )
 
 
-def note_page(product: Product) -> html.Div:
+def note_page(product: Product, prefilled: dict[str, float] | None = None) -> html.Div:
     """Product page of a note priced by bricks (``product`` must be one)."""
     spec = note_spec(product)
     assert spec is not None  # the router only sends notes here
+    terms = default_terms(spec)
+    applied = ui.apply_prefill(terms, prefilled or {})
     return ui.product_shell(
         product,
         spec.description,
-        _terms_card(spec),
+        _terms_card(spec, terms),
         {
             "Payoff": html.Div(
                 [dcc.Loading([dcc.Graph(id="note-payoff-graph"), html.Div(id="note-payoff-notes")])]
@@ -210,6 +211,7 @@ def note_page(product: Product) -> html.Div:
             "Monte Carlo": _tab_monte_carlo(),
             "Solve for": _tab_solve(spec),
         },
+        prefilled=applied,
     )
 
 

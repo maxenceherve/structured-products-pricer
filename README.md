@@ -54,7 +54,7 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 | Hedging noise at equal volatilities | standard deviation 0.424 (daily) and 0.930 (weekly), Derman-Kamal 0.432 and 0.952 | notebook 03 |
 | Taylor P&L explain | residual third order (log-log slope 3.22), step-by-step attribution exact | notebook 03, `tests/test_risk_hedging.py` |
 | Every certificate and note is replicated by its bricks, and worth its expected payoff under the smile's density | payoff gap below 1e-9, value gap below 1e-6 relative | `tests/test_capital_protection.py`, `tests/test_participation.py` |
-| Quality | 1237 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
+| Quality | 1240 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
 
 | | |
 |---|---|
@@ -107,7 +107,7 @@ src/spricer/
   packaging.py    equivalent constructions
 web/              Dash app: gallery, product pages, finder, product sheets
 notebooks/        validation, model risk, Greeks and hedging (with outputs)
-tests/            1237 tests
+tests/            1240 tests
 ```
 
 ## Install and run

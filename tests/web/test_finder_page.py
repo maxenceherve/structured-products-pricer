@@ -57,5 +57,19 @@ def test_defaults():
 def test_a_card_without_a_page_has_no_thumbnail(monkeypatch):
     card = CARDS[0]
     monkeypatch.setattr(registry, "find", lambda slug: None)
-    rendered = page._recommendation(Recommendation(card, 3.0, ("ok",), ("careful",)), 1)
+    rendered = page._recommendation(Recommendation(card, 3.0, ("ok",), ("careful",)), 1, "/")
     assert "Img" not in text_of(rendered)
+
+
+def test_links_carry_the_answers_to_the_product_pages():
+    from spricer.finder import Profile
+
+    profile = Profile(View.MILD_BULL, 20.0, Objective.GROWTH, horizon=2.0)
+    link = page.product_link("Participation note", profile)
+    assert link == "/product/participation-note?maturity=2.0&protection=80.0&buffer=20.0"
+    full = page.product_link("Call", Profile(View.BULLISH, 0.0, Objective.GROWTH, horizon=1.0))
+    assert full == "/product/call?maturity=1.0&protection=100.0"
+    risky = page.product_link("Call", Profile(View.BULLISH, 100.0, Objective.GROWTH))
+    assert risky == "/product/call?maturity=3.0"
+    text = text_of(page.results(View.MILD_BULL.value, None, 2.0, 20, False, None))
+    assert "?maturity=2.0&protection=80.0" in text

@@ -56,15 +56,17 @@ MONEYNESS_COLORS = {Moneyness.ITM: "success", Moneyness.ATM: "primary", Moneynes
 # --- Layout ------------------------------------------------------------------------------------
 
 
-def _terms_card(setup: OptionSetup) -> dbc.Card:
-    terms = setup.default_terms()
+def _terms_card(setup: OptionSetup, terms: dict[str, Any]) -> dbc.Card:
     term = ui.term
     fields: list[Any] = [
         ui.field("Position", ui.segmented(term("side"), ("Long", "Short"), terms["side"])),
         dbc.Row(
             [
                 dbc.Col(
-                    ui.field("Maturity (years)", ui.number(term("maturity"), 1.0, 0.25, min=0.01))
+                    ui.field(
+                        "Maturity (years)",
+                        ui.number(term("maturity"), terms["maturity"], 0.25, min=0.01),
+                    )
                 ),
                 dbc.Col(ui.field("Notional", ui.number(term("notional"), terms["notional"], 1e5))),
             ],
@@ -194,14 +196,16 @@ def _simulator() -> list[Any]:
     ]
 
 
-def option_page(product: Product) -> html.Div:
+def option_page(product: Product, prefilled: dict[str, float] | None = None) -> html.Div:
     """Product page of an option or a strategy (``product`` must have a setup)."""
     setup = setup_of(product)
     assert setup is not None  # the router only sends options here
+    terms = setup.default_terms()
+    applied = ui.apply_prefill(terms, prefilled or {})
     return ui.product_shell(
         product,
         setup.description,
-        _terms_card(setup),
+        _terms_card(setup, terms),
         {
             "Payoff": _tab_payoff(),
             "Decomposition": dcc.Loading(html.Div(id="decomposition-result")),
@@ -210,6 +214,7 @@ def option_page(product: Product) -> html.Div:
                 "Options in the position", 10_000, simulator=_simulator()
             ),
         },
+        prefilled=applied,
     )
 
 

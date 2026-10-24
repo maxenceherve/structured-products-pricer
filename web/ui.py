@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import parse_qs
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
@@ -153,11 +155,12 @@ def product_shell(
     terms_card: Any,
     tabs: dict[str, Any],
     kpis: Any = None,
+    prefilled: dict[str, float] | None = None,
 ) -> html.Div:
     """A product page: terms on the left; headline numbers and tabs on the right.
 
     ``tabs`` maps tab titles to their contents; the first tab is shown. ``kpis`` is the
-    initial content of the headline numbers.
+    initial content of the headline numbers; ``prefilled`` the terms taken from the finder.
     """
     ids = [registry.slugify(t) for t in tabs]
     return html.Div(
@@ -181,6 +184,7 @@ def product_shell(
                 ],
                 className="market-strip",
             ),
+            prefill_notice(prefilled or {}),
             dbc.Row(
                 [
                     dbc.Col(terms_card, lg=4, className="mb-4"),
@@ -323,3 +327,45 @@ def sheet_button(id_: str) -> dbc.Button:
         n_clicks=0,
         className="mt-2",
     )
+
+
+PREFILL_LABELS = {
+    "maturity": ("maturity", "{:g} years"),
+    "protection": ("capital protection", "{:g} %"),
+    "buffer": ("buffer level", "{:g} %"),
+}
+
+
+def prefill(search: str | None) -> dict[str, float]:
+    """Terms passed in the address by the finder (``?maturity=2&protection=80``)."""
+    out: dict[str, float] = {}
+    for key, values in parse_qs((search or "").lstrip("?")).items():
+        try:
+            value = float(values[0])
+        except ValueError:
+            continue
+        if key in PREFILL_LABELS and math.isfinite(value) and value >= 0.0:
+            out[key] = value
+    return out
+
+
+def prefill_notice(values: dict[str, float]) -> Any:
+    """What the finder has set on this page, if anything."""
+    if not values:
+        return None
+    parts = [f"{PREFILL_LABELS[k][0]} {PREFILL_LABELS[k][1].format(v)}" for k, v in values.items()]
+    return dbc.Alert(
+        [
+            html.I(className="bi bi-magic me-2"),
+            "Set from your answers in the finder: " + ", ".join(parts) + ". Change them freely.",
+        ],
+        color="info",
+        className="py-2",
+    )
+
+
+def apply_prefill(terms: dict[str, Any], values: dict[str, float]) -> dict[str, float]:
+    """Put the prefilled values in the terms the product has; return those applied."""
+    applied = {k: v for k, v in values.items() if k in terms}
+    terms.update(applied)
+    return applied

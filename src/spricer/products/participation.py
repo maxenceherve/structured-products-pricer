@@ -2,8 +2,10 @@
 
 Certificates (EUSIPA 12xx and 13xx) hold the underlying itself and reshape its payoff with
 options; the capital is not protected, at most cushioned. Levels are in % of the initial level,
-amounts in % of the notional. ``U`` is the underlying (a prepaid forward), ``C``/``P`` calls and
-puts, ``PDI`` a down-and-in put and ``UOC`` an up-and-out call, observed as the product says.
+amounts in % of the notional. ``U`` is the underlying, held as a zero-strike call (a prepaid
+forward, without the dividends), ``C``/``P`` calls and puts, ``PDO`` a down-and-out put and
+``UOC`` an up-and-out call, observed as the product says. The decompositions are the issuers'
+usual ones (a bonus certificate is a zero-strike call and a down-and-out put at the bonus level).
 
 Most certificates share an *upside*: the underlying, with ``part`` % of its rise above the
 strike ``K``, possibly capped at ``cap``::
@@ -11,12 +13,12 @@ strike ``K``, possibly capped at ``cap``::
     upside = U + (part - 100 %) C(K) - part x C(cap)
 
 * outperformance: ``upside``: more than the rise above the strike, all the fall;
-* barrier outperformance: ``upside + P(100) - PDI(100, B)``: the capital back while the barrier
-  holds;
-* bonus certificate: ``upside + (bonus - upside)+`` while the barrier holds, replicated by puts
-  at the strike and where the upside reaches the bonus, less the same puts knocked in at ``B``;
-* twin-win certificate: ``upside + (100 % + down) (P(K) - PDI(K, B))``: gains on a move either
-  way while the barrier holds;
+* barrier outperformance: ``upside + PDO(100, B)``: the capital back while the barrier holds;
+* bonus certificate: ``upside + (bonus - upside)+`` while the barrier holds: down-and-out puts
+  at the bonus level (``U + PDO(bonus, B)`` with the usual terms), or at the strike and where
+  the upside reaches the bonus when the participation differs from 100 %;
+* twin-win certificate: ``upside + (100 % + down) PDO(K, B)``: two down-and-out puts with the
+  usual terms, gains on a move either way while the barrier holds;
 * airbag certificate: ``ZC(100) + part x [C(K) - C(cap)] - (100 / A) P(A)``: the capital back
   down to the airbag level ``A``, then a loss that reaches the whole notional only at zero;
 * buffer certificate: ``ZC(100) + part x [C(K) - C(cap)] - P(B)``: the capital back down to the
@@ -58,7 +60,7 @@ def _check_upside(participation: float, strike: float, cap: float | None) -> Non
 
 def _add_upside(b: _Builder, participation: float, strike: float, cap: float | None) -> None:
     """The underlying, ``participation`` % of its rise above ``strike``, up to ``cap``."""
-    b.underlying("Underlying")
+    b.underlying("Zero-strike call (the underlying)")
     b.option("Long call (participation above the strike)", "call", strike, participation - 100.0)
     if cap is not None:
         b.option("Short call (cap)", "call", cap, -participation)
@@ -117,14 +119,13 @@ def barrier_outperformance_certificate(
         raise ValueError("the barrier must be below the initial level")
     b = _Builder(initial, maturity)
     _add_upside(b, participation, strike, cap)
-    b.option("Long put (capital back)", "put", 100.0, 100.0)
     b.barrier_option(
-        "Short put down-and-in",
+        "Long put down-and-out (capital back while the barrier holds)",
         "put",
-        "down-and-in",
+        "down-and-out",
         100.0,
         barrier,
-        -100.0,
+        100.0,
         monitoring,
         observations,
     )
@@ -176,14 +177,13 @@ def bonus_certificate(
         else [(reach, participation), (strike, 100.0 - participation)]
     )
     for level, quantity in puts:
-        b.option(f"Long put (bonus) K {level:g}%", "put", level, quantity)
         b.barrier_option(
-            f"Short put down-and-in (bonus lost) K {level:g}%",
+            f"Long put down-and-out (bonus) K {level:g}%",
             "put",
-            "down-and-in",
+            "down-and-out",
             level,
             barrier,
-            -quantity,
+            quantity,
             monitoring,
             observations,
         )
@@ -224,14 +224,14 @@ def twin_win_certificate(
         raise ValueError("the barrier must be below the strike")
     b = _Builder(initial, maturity)
     _add_upside(b, participation_up, strike, cap)
-    b.option("Long put (downside turned into a gain)", "put", strike, 100.0 + participation_down)
+    # 1 + down puts: one gives the capital back, the others turn the fall into a gain
     b.barrier_option(
-        "Short put down-and-in",
+        "Long puts down-and-out (the fall turned into a gain)",
         "put",
-        "down-and-in",
+        "down-and-out",
         strike,
         barrier,
-        -(100.0 + participation_down),
+        100.0 + participation_down,
         monitoring,
         observations,
     )
@@ -416,7 +416,7 @@ def discount_certificate(*, cap: float, maturity: float, initial: float) -> Note
     """The underlying bought at a discount, paid at most ``cap``."""
     _positive(cap=cap)
     b = _Builder(initial, maturity)
-    b.underlying("Underlying")
+    b.underlying("Zero-strike call (the underlying)")
     b.option("Short call (cap)", "call", cap, -100.0)
 
     def formula(p: FloatArray) -> FloatArray:

@@ -67,8 +67,7 @@ def _grid(id_: str, rows: Rows, columns: list[dict[str, Any]], height: str) -> d
     )
 
 
-def _terms_card(spec: CouponNoteSpec) -> dbc.Card:
-    terms = default_terms(spec)
+def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
     term = ui.term
     params: list[Any] = []
     for p in spec.params:
@@ -79,7 +78,7 @@ def _terms_card(spec: CouponNoteSpec) -> dbc.Card:
         label = p.label if p.kind == "count" else f"{p.label} (%)"
         step = 1 if p.kind == "count" else 0.5
         params.append(
-            dbc.Col(ui.field(label, ui.number(term(p.key), p.default, step, min=0)), xs=6)
+            dbc.Col(ui.field(label, ui.number(term(p.key), terms[p.key], step, min=0)), xs=6)
         )
     alive = dbc.Accordion(
         dbc.AccordionItem(
@@ -222,10 +221,12 @@ def _button(id_: str, icon: str, label: str) -> dbc.Button:
     )
 
 
-def coupon_page(product: Product) -> html.Div:
+def coupon_page(product: Product, prefilled: dict[str, float] | None = None) -> html.Div:
     """Product page of a coupon note (``product`` must be one)."""
     spec = coupon_spec(product)
     assert spec is not None  # the router only sends coupon notes here
+    terms = default_terms(spec)
+    applied = ui.apply_prefill(terms, prefilled or {})
     solvable = [p for p in spec.params if p.solvable]
     solve = html.Div(
         [
@@ -261,7 +262,7 @@ def coupon_page(product: Product) -> html.Div:
     return ui.product_shell(
         product,
         spec.description,
-        _terms_card(spec),
+        _terms_card(spec, terms),
         {
             "Payoff": dcc.Loading(html.Div(id="cn-payoff")),
             "Legs": dcc.Loading(html.Div(id="cn-legs")),
@@ -278,6 +279,7 @@ def coupon_page(product: Product) -> html.Div:
                 dcc.Download(id="cn-sheet-download"),
             ]
         ),
+        prefilled=applied,
     )
 
 

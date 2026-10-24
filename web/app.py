@@ -29,8 +29,11 @@ TITLE = "Structured Products Pricer"
 # --- Pure functions behind the callbacks -------------------------------------------------------
 
 
-def route(pathname: str | None, query: str | None) -> Any:
-    """Page for an address; a search shows the matching products wherever you are."""
+def route(pathname: str | None, query: str | None, search: str | None = None) -> Any:
+    """Page for an address; a search shows the matching products wherever you are.
+
+    ``search`` is the address's query string: terms set by the finder for a product page.
+    """
     path = (pathname or "/").rstrip("/") or "/"
     if query and query.strip():
         return layout.gallery(query)
@@ -41,7 +44,7 @@ def route(pathname: str | None, query: str | None) -> Any:
     if path.startswith("/product/"):
         product = registry.find(path.removeprefix("/product/"))
         if product is not None:
-            return layout.product_page(product)
+            return layout.product_page(product, ui.prefill(search))
     return layout.not_found(path)
 
 
@@ -159,9 +162,12 @@ def create_app() -> dash.Dash:
         ]
     )
 
-    app.callback(Output("page", "children"), Input("url", "pathname"), Input("search", "value"))(
-        route
-    )
+    app.callback(
+        Output("page", "children"),
+        Input("url", "pathname"),
+        Input("search", "value"),
+        Input("url", "search"),
+    )(route)
     app.callback(
         Output("market-panel", "is_open"),
         Input("market-button", "n_clicks"),
