@@ -23,6 +23,8 @@ VARIANTS: list[tuple[cp.NoteSpec, dict[str, float]]] = [(spec, {}) for spec in c
     (cp.find_note("Bonus note"), {"protection": 100.0, "barrier": 80.0, "capped": 0.0}),
     # protection below the barrier: the note tracks the underlying between the two
     (cp.find_note("Bonus note"), {"protection": 80.0, "barrier": 90.0, "bonus": 110.0}),
+    # a strangle-like twin-win: the call and the put struck apart
+    (cp.find_note("Twin-win note"), {"call_strike": 105.0, "put_strike": 95.0}),
 ]
 IDS = [f"{spec.name}{'-' + '-'.join(v) if v else ''}" for spec, v in VARIANTS]
 
@@ -172,6 +174,7 @@ def test_strikes_are_read_at_the_true_moneyness():
         (lambda: cp.find_note("Shark note (down)").build({"barrier": 105.0}, T, INITIAL), "below"),
         (lambda: cp.find_note("Bonus note").build({"bonus": 80.0}, T, INITIAL), "bonus"),
         (lambda: cp.find_note("Twin-win note").build({"floor": 120.0}, T, INITIAL), "floor"),
+        (lambda: cp.find_note("Twin-win note").build({"cap": 90.0}, T, INITIAL), "cap"),
         (
             lambda: cp.find_note("Participation note").build({"participation": -5.0}, T, INITIAL),
             "participation",

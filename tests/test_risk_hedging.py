@@ -6,7 +6,6 @@ import math
 import numpy as np
 import pytest
 
-import presentation as pres
 from spricer import strategies as strat
 from spricer.bricks import EuropeanOption
 from spricer.conventions import Greeks
@@ -14,6 +13,7 @@ from spricer.hedging import derman_kamal_std, simulate_delta_hedge, static_hedge
 from spricer.market import FlatVol, Market
 from spricer.products.capital_protection import find_note
 from spricer.risk import Shock, explain, greeks, residual_order, scenario_matrix
+from web.options import display_greeks
 
 S, R, Q, VOL = 100.0, 0.03, 0.01, 0.20
 FLAT = Market(S, R, Q, FlatVol(VOL))
@@ -33,7 +33,7 @@ def call_value(m: Market, t: float) -> float:
 
 def test_risk_greeks_are_the_desk_greeks():
     g = greeks(call_value, FLAT, 1.0)
-    shown = pres.display_greeks(call(1.0), FLAT)
+    shown = display_greeks(call(1.0), FLAT)
     assert g["Delta"] == pytest.approx(shown["Delta (%)"] / 100.0, rel=1e-3)
     assert g["Gamma"] == pytest.approx(shown["Gamma (%)"] / 100.0, rel=1e-3)
     assert g["Vega"] == pytest.approx(shown["Vega (%)"], rel=1e-3)

@@ -32,7 +32,7 @@ LEG_NAMES = (
     "Coupons",
     "Redemption at call",
     "Redemption at maturity",
-    "Capital at risk (short down-and-in put)",
+    "Short down-and-in put (capital at risk)",
 )
 
 
@@ -154,11 +154,18 @@ def _cash_flows(
     )
 
 
+def leg_samples(
+    note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float = 0.0
+) -> FloatArray:
+    """Discounted value of each leg of :data:`LEG_NAMES` on every row: one line per leg."""
+    return np.asarray(_cash_flows(note, basket, paths, credit_spread).legs)
+
+
 def note_samples(
     note: CouponNote, basket: Basket, paths: PathSet, credit_spread: float = 0.0
 ) -> FloatArray:
     """Discounted value of ``note`` on every row of ``paths`` (feed to ``paths.estimate``)."""
-    return np.asarray(np.sum(_cash_flows(note, basket, paths, credit_spread).legs, axis=0))
+    return np.asarray(np.sum(leg_samples(note, basket, paths, credit_spread), axis=0))
 
 
 def evaluate_note(

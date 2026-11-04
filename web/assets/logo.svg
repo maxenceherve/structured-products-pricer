@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48">
+  <rect x="2.5" y="6.5" width="35" height="35" rx="3" fill="#ffffff" stroke="#bfd1ba"/>
+  <path d="M2.5 19.5h35M2.5 30.5h35M14.5 6.5v35M25.5 6.5v35" stroke="#eaf1e7"/>
+  <polyline points="7,34 20,34 33,14" fill="none" stroke="#1b2a41" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <text x="48" y="23" font-family="IBM Plex Serif, Georgia, serif" font-size="17" font-weight="600" fill="#1b2a41">Structured Products</text>
+  <text x="48" y="40" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="12" fill="#46546b">Pricing, Greeks and hedging</text>
+</svg>

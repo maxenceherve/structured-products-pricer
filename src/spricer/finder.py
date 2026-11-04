@@ -35,21 +35,16 @@ class View(StrEnum):
 
 
 class Protection(StrEnum):
-    """Capital protection, from the safest to the riskiest."""
+    """How a product protects the capital."""
 
     FULL = "Full capital protection"
-    PARTIAL = "Partial protection (90 %)"
+    PARTIAL = "Partial protection"
     CONDITIONAL = "Protected unless a barrier is breached"
     NONE = "Capital at risk"
 
 
 PROTECTION_PENALTY = 10.0
-PROTECTION_RANK = {
-    Protection.FULL: 3,
-    Protection.PARTIAL: 2,
-    Protection.CONDITIONAL: 1,
-    Protection.NONE: 0,
-}
+MORE_THAN_NEEDED = 25.0  # % of capital: protection this much beyond the need costs return
 
 
 class Objective(StrEnum):
@@ -69,13 +64,24 @@ class VolView(StrEnum):
 
 @dataclass(frozen=True)
 class Profile:
-    """What the investor wants."""
+    """What the investor expects and accepts.
+
+    Attributes
+    ----------
+    view, objective, vol_view, horizon
+        Expected move, how to be paid, view on volatility, years.
+    max_loss
+        Largest loss of capital accepted at maturity, in % (0: full protection).
+    accept_barrier
+        A product protected only while a barrier holds is acceptable.
+    """
 
     view: View
-    protection: Protection
+    max_loss: float
     objective: Objective
     vol_view: VolView = VolView.NEUTRAL
     horizon: float = 3.0
+    accept_barrier: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +108,9 @@ class ProductCard:
         How the product makes money, in one sentence.
     risks
         What can go wrong, in one sentence.
+    partial_loss
+        For a partial protection, the largest loss of capital at maturity in % (with the
+        product's usual terms).
     """
 
     name: str
@@ -113,6 +122,23 @@ class ProductCard:
     horizon: tuple[float, float]
     how: str
     risks: str
+    partial_loss: float = 100.0
+
+    @property
+    def worst_loss(self) -> float:
+        """Largest loss of capital at maturity, in %, with the product's usual terms."""
+        if self.protection is Protection.FULL:
+            return 0.0
+        if self.protection is Protection.PARTIAL:
+            return self.partial_loss
+        return 100.0
+
+    @property
+    def protection_text(self) -> str:
+        """The protection in words, with its level."""
+        if self.protection is Protection.PARTIAL:
+            return f"Loss limited to {self.partial_loss:g} %"
+        return self.protection.value
 
 
 @dataclass(frozen=True)
@@ -273,6 +299,7 @@ CARDS: tuple[ProductCard, ...] = (
         (1.0, 5.0),
         "pays at least a bonus level if the barrier holds, plus a share of the rise",
         "below the barrier only the partial protection is left",
+        partial_loss=10.0,
     ),
     ProductCard(
         "Reverse convertible",
@@ -320,6 +347,168 @@ CARDS: tuple[ProductCard, ...] = (
         "coupons stop below the coupon barrier, and the capital is at risk below the "
         "protection barrier",
     ),
+    ProductCard(
+        "Shark note (down)",
+        "Capital protection",
+        {V.MILD_BEAR: 1.0, V.BEARISH: 0.4},
+        Protection.FULL,
+        Objective.GROWTH,
+        -1,
+        (1.0, 5.0),
+        "a higher participation in the fall than a plain bearish note, because the put is "
+        "knocked out below a barrier (a rebate is paid instead)",
+        "a crash below the barrier only earns the rebate",
+    ),
+    ProductCard(
+        "Outperformance certificate",
+        "Participation certificates",
+        {V.BULLISH: 1.0, V.MILD_BULL: 0.6},
+        Protection.NONE,
+        Objective.GROWTH,
+        +1,
+        (1.0, 5.0),
+        "holds the underlying and more than its rise above the strike, paid for with the dividends",
+        "all of the fall is borne, as with the underlying",
+    ),
+    ProductCard(
+        "Barrier outperformance certificate",
+        "Participation certificates",
+        {V.BULLISH: 0.9, V.MILD_BULL: 0.7},
+        Protection.CONDITIONAL,
+        Objective.GROWTH,
+        0,
+        (1.0, 5.0),
+        "more than the rise above the strike, and the capital back as long as the barrier holds",
+        "after a breach the capital falls with the underlying",
+    ),
+    ProductCard(
+        "Bonus certificate",
+        "Participation certificates",
+        {V.MILD_BULL: 0.9, V.RANGE: 0.8},
+        Protection.CONDITIONAL,
+        Objective.GROWTH,
+        -1,
+        (1.0, 5.0),
+        "pays at least the bonus level while the barrier holds, and a share of the rise above",
+        "once the barrier is breached the certificate is the underlying, losses included",
+    ),
+    ProductCard(
+        "Twin-win certificate",
+        "Participation certificates",
+        {V.BIG_MOVE: 0.6, V.MILD_BULL: 0.6, V.MILD_BEAR: 0.5},
+        Protection.CONDITIONAL,
+        Objective.GROWTH,
+        0,
+        (1.0, 5.0),
+        "gains on a move either way as long as the barrier holds",
+        "a fall through the barrier turns the gains on the way down into losses",
+    ),
+    ProductCard(
+        "Airbag certificate",
+        "Participation certificates",
+        {V.MILD_BULL: 0.9, V.BULLISH: 0.6, V.MILD_BEAR: 0.3},
+        Protection.PARTIAL,
+        Objective.GROWTH,
+        0,
+        (1.0, 5.0),
+        "the rise of the underlying, the capital back down to the airbag level, then a "
+        "cushioned loss",
+        "below the airbag level the loss grows, and the upside can be capped",
+        partial_loss=100.0,
+    ),
+    ProductCard(
+        "Buffer certificate",
+        "Participation certificates",
+        {V.MILD_BULL: 0.9, V.BULLISH: 0.6, V.MILD_BEAR: 0.3},
+        Protection.PARTIAL,
+        Objective.GROWTH,
+        0,
+        (1.0, 5.0),
+        "the rise of the underlying, and the first losses absorbed down to the buffer",
+        "below the buffer the loss is one for one",
+        partial_loss=90.0,
+    ),
+    ProductCard(
+        "Sprint certificate",
+        "Participation certificates",
+        {V.MILD_BULL: 1.0, V.BULLISH: 0.5},
+        Protection.NONE,
+        Objective.GROWTH,
+        0,
+        (0.5, 3.0),
+        "a leveraged share of the rise up to a cap, paid for by giving up the gains above it",
+        "all of the fall is borne, and the gain stops at the cap",
+    ),
+    ProductCard(
+        "Reverse bonus certificate",
+        "Participation certificates",
+        {V.MILD_BEAR: 1.0, V.RANGE: 0.6, V.BEARISH: 0.4},
+        Protection.CONDITIONAL,
+        Objective.GROWTH,
+        -1,
+        (0.5, 3.0),
+        "gains as the underlying falls, with a bonus as long as it never rises to the barrier",
+        "a rally through the barrier removes the bonus, and losses grow as the underlying rises",
+    ),
+    ProductCard(
+        "Discount certificate",
+        "Yield enhancement",
+        {V.RANGE: 0.9, V.MILD_BULL: 0.7},
+        Protection.NONE,
+        Objective.INCOME,
+        -1,
+        (0.5, 2.0),
+        "buys the underlying below its price by selling the upside above a cap",
+        "a fall below the purchase price is borne; the gain stops at the cap",
+    ),
+    ProductCard(
+        "Shark warrant (call)",
+        "Barrier options",
+        {V.MILD_BULL: 0.9, V.BULLISH: 0.4},
+        Protection.NONE,
+        Objective.GROWTH,
+        -1,
+        (0.25, 2.0),
+        "a call cheaper than a vanilla because it is cancelled above a barrier, with a rebate",
+        "the premium is lost below the strike, and a rally through the barrier pays only the "
+        "rebate",
+    ),
+    ProductCard(
+        "Shark warrant (put)",
+        "Barrier options",
+        {V.MILD_BEAR: 0.9, V.BEARISH: 0.4},
+        Protection.NONE,
+        Objective.GROWTH,
+        -1,
+        (0.25, 2.0),
+        "a put cheaper than a vanilla because it is cancelled below a barrier, with a rebate",
+        "the premium is lost above the strike, and a crash through the barrier pays only the "
+        "rebate",
+    ),
+    ProductCard(
+        "Autocallable reverse convertible",
+        "Autocallables",
+        {V.MILD_BULL: 1.0, V.RANGE: 0.8},
+        Protection.NONE,
+        Objective.INCOME,
+        -1,
+        (1.0, 5.0),
+        "a certain coupon until the note is called back at par, as soon as the underlying is "
+        "back at its initial level",
+        "if never called, the capital falls with the underlying below the strike",
+    ),
+    ProductCard(
+        "Autocallable barrier reverse convertible",
+        "Autocallables",
+        {V.MILD_BULL: 1.0, V.RANGE: 0.9, V.MILD_BEAR: 0.3},
+        Protection.CONDITIONAL,
+        Objective.INCOME,
+        -1,
+        (1.0, 5.0),
+        "a certain coupon until the note is called back at par; the capital is safe while the "
+        "barrier holds",
+        "after a breach, and without a call, the capital falls with the underlying",
+    ),
 )
 
 _VOL_SIGN = {VolView.RISE: 1, VolView.NEUTRAL: 0, VolView.FALL: -1}
@@ -335,18 +524,32 @@ def _score(card: ProductCard, profile: Profile) -> Recommendation:
     elif fit > 0.0:
         reasons.append(f"Partly fits a {profile.view.value.lower()} view: it {card.how}.")
 
-    wanted, offered = PROTECTION_RANK[profile.protection], PROTECTION_RANK[card.protection]
-    if offered < wanted:
+    loss, accepted = card.worst_loss, profile.max_loss
+    if loss <= accepted + 1e-9:
+        if loss < accepted - MORE_THAN_NEEDED:
+            score -= 0.5
+            reasons.append(
+                f"Loses at most {loss:g} % of the capital: more protection than you need, paid "
+                "for with some return."
+            )
+        elif loss >= 100.0:
+            reasons.append("Capital at risk, as you accept.")
+        else:
+            reasons.append(
+                f"Loses at most {loss:g} % of the capital, within the {accepted:g} % you accept."
+            )
+    elif card.protection is Protection.CONDITIONAL and profile.accept_barrier:
+        reasons.append("Capital protected unless the barrier is breached, as you accept.")
+    else:
         score -= PROTECTION_PENALTY
         warnings.append(
-            f"Protects less than you asked: {card.protection.value.lower()} instead of "
-            f"{profile.protection.value.lower()}."
+            f"Can lose up to {loss:g} % of the capital, more than the {accepted:g} % you accept"
+            + (
+                " (protected only while the barrier holds)."
+                if card.protection is Protection.CONDITIONAL
+                else "."
+            )
         )
-    elif offered > wanted:
-        score -= 0.5
-        reasons.append(f"{card.protection.value}: more than you need, paid for with some return.")
-    else:
-        reasons.append(f"{card.protection.value}, as you asked.")
 
     if card.objective is profile.objective:
         score += 1.5
@@ -387,6 +590,8 @@ def recommend(profile: Profile, top: int | None = None) -> list[Recommendation]:
     """Every product scored against ``profile``, best first (ties keep the catalog order)."""
     if not profile.horizon > 0.0:
         raise ValueError("the horizon must be positive")
+    if not 0.0 <= profile.max_loss <= 100.0:
+        raise ValueError("the largest loss accepted must be between 0 and 100 %")
     ranked = sorted((_score(c, profile) for c in CARDS), key=lambda r: -r.score)
     return ranked if top is None else ranked[:top]
 

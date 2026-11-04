@@ -33,7 +33,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-app = ["streamlit>=1.60", "plotly>=5.24", "pandas>=2.2"]
+web = [
+    "dash>=4.4.1",
+    "plotly>=5.24",
+    "dash-ag-grid>=35.3.0",
+    "dash-bootstrap-components>=2.0.4",
+    "gunicorn>=26.2.0",
+]
 
 [project.urls]
 Repository = "https://github.com/maxenceherve/structured-products-pricer"
@@ -61,7 +67,7 @@ packages = ["src/spricer"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests", "app"]
+src = ["src", "tests", "."]
 
 [tool.ruff.lint]
 select = [
@@ -89,7 +95,7 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
-"app/**" = ["D"]
+"web/**" = ["D1"]  # internal application modules
 "scripts/**" = ["D103"]
 "notebooks/**" = ["D", "F401"]  # every notebook starts from the same setup cell
 
@@ -98,11 +104,10 @@ convention = "numpy"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests", "app"]
-mypy_path = "app"  # Streamlit puts the entry script folder on sys.path
+files = ["src", "tests", "web"]
 
 [[tool.mypy.overrides]]
-module = ["plotly.*", "QuantLib.*"]
+module = ["plotly.*", "QuantLib.*", "dash_bootstrap_components.*", "dash_ag_grid.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -118,13 +123,14 @@ check_untyped_defs = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 markers = ["slow: long-running Monte Carlo tests"]
 xfail_strict = true
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source = ["spricer"]
+source = ["spricer", "web"]
 branch = true
 
 [tool.coverage.report]

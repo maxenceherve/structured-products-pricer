@@ -1,4 +1,4 @@
-"""Write and execute the notebooks of ``notebooks/``; their figures go to ``docs/figures/``.
+"""Write and execute the notebooks of ``notebooks/``, with their figures inline.
 
 Run from the repository root:  uv run python scripts/build_notebooks.py
 Every number quoted in the README comes from these notebooks or from the tests.
@@ -15,7 +15,6 @@ from nbclient import NotebookClient
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOKS = ROOT / "notebooks"
-FIGURES = ROOT / "docs" / "figures"
 KERNEL = {"name": "python3", "display_name": "Python 3", "language": "python"}
 
 SETUP = """\
@@ -27,7 +26,6 @@ import numpy as np
 plt.rcParams.update({"figure.dpi": 110, "axes.grid": True, "grid.alpha": 0.3,
                      "axes.spines.top": False, "axes.spines.right": False})
 BLUE, GREEN, RED, ORANGE, GREY = "#1f4e79", "#1a9850", "#d73027", "#f46d43", "#7f7f7f"
-FIGURES = "../docs/figures"
 """
 
 VALIDATION = [
@@ -57,7 +55,6 @@ right.set(title="Risk-neutral density of the spot", xlabel="Spot at maturity")
 left.legend()
 right.legend()
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/smile_density.png")
 print("arbitrage-free:", surface.check_arbitrage().is_arbitrage_free)
 """,
     ),
@@ -77,7 +74,6 @@ for t, color in zip((0.1, 0.5, 1.0, 2.5), (RED, ORANGE, BLUE, GREEN), strict=Tru
 ax.set(title="Dupire local volatility (%)", xlabel="Spot (% of today)")
 ax.legend()
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/local_vol.png")
 """,
     ),
     (
@@ -135,7 +131,6 @@ ax.bar(names, [1e4 * rows[n][0] for n in names], yerr=[2 * 1e4 * rows[n][1] for 
 ax.axhline(0, color=GREY)
 ax.set(title="ATM 6-month digital: bias (bp)", ylabel="MC - exact (bp), ± 2 s.e.")
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/richardson.png")
 """,
     ),
 ]
@@ -183,7 +178,6 @@ ax.bar(names, [results[n][0] for n in names], yerr=[2 * results[n][1] for n in n
 ax.set_ylim(80, 92)
 ax.set(title="5-year digital coupons + European PDI(100, 60)", ylabel="% of notional")
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/model_risk_strip.png")
 """,
     ),
     ("md", "## Continuous barriers: one volatility against the smile"),
@@ -240,7 +234,6 @@ fig, ax = plt.subplots(figsize=(6, 3.5))
 ax.bar(names, ratios, color=BLUE)
 ax.set(title="Phoenix Greeks: noise without / with CRN", ylabel="ratio of standard errors")
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/crn_noise.png")
 """,
     ),
     (
@@ -292,12 +285,17 @@ fig, ax = plt.subplots(figsize=(7, 3.8))
 for n, color in ((52, ORANGE), (252, BLUE)):
     sim = simulate_delta_hedge(call, flat, 1.0, realised_vol=0.20, rebalancings=n, n_paths=20_000)
     ax.hist(sim.pnl, bins=80, alpha=0.6, color=color, label=f"{n} rebalancings")
+    # Standard error of the std on independent antithetic pairs, by the delta method.
+    half = len(sim.pnl) // 2
+    squares = (sim.pnl - sim.pnl.mean()) ** 2
+    pairs = (squares[:half] + squares[half:]) / 2
+    std_error = pairs.std(ddof=1) / math.sqrt(half) / (2 * sim.std)
     print(f"{n:>3} rebalancings: mean {sim.mean.value:+.3f} ± {sim.mean.std_error:.3f}, "
-          f"std {sim.std:.3f} (Derman-Kamal {derman_kamal_std(vega, 0.20, n):.3f})")
+          f"std {sim.std:.3f} ± {std_error:.3f} "
+          f"(Derman-Kamal {derman_kamal_std(vega, 0.20, n):.3f})")
 ax.set(title="Delta-hedged long call, realised = implied = 20 %", xlabel="P&L (% of spot)")
 ax.legend()
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/hedging_pnl.png")
 other = Market(100.0, 0.03, 0.01, FlatVol(0.25))
 gap = float(call(1.0).value(other)) - float(call(1.0).value(flat))
 sim = simulate_delta_hedge(call, flat, 1.0, realised_vol=0.25, rebalancings=252, n_paths=20_000)
@@ -324,7 +322,6 @@ ax.loglog(moves, res[-1] * (moves / moves[-1]) ** 3, "--", color=GREY, label="sl
 ax.set(title="Unexplained P&L of a call", xlabel="Spot move (%)", ylabel="|residual| (% of spot)")
 ax.legend()
 fig.tight_layout()
-fig.savefig(f"{FIGURES}/taylor_residual.png")
 """,
     ),
 ]
@@ -344,7 +341,6 @@ def build(name: str, cells: list[tuple[str, str]]) -> None:
 
 if __name__ == "__main__":
     NOTEBOOKS.mkdir(exist_ok=True)
-    FIGURES.mkdir(parents=True, exist_ok=True)
     build("01_pricing_and_validation", VALIDATION)
     build("02_model_risk", MODEL_RISK)
     build("03_greeks_and_hedging", HEDGING)
