@@ -16,6 +16,7 @@ import numpy as np
 from spricer.market import Basket, Market
 from spricer.mc import check_correlation, nearest_correlation
 from spricer.mc.coupon_notes import LEG_NAMES, CouponNoteMonteCarlo
+from spricer.mc.greeks import NoteGreeks
 from spricer.mc.paths import MCEstimate
 from spricer.monitoring import Monitoring
 from spricer.products.coupon_notes import (
@@ -25,8 +26,9 @@ from spricer.products.coupon_notes import (
     CouponNoteSpec,
     LifeState,
 )
-from web.market import MATURITY, MarketData, market_from_data
-from web.options import MONITORING, Terms
+from web import registry
+from web.market import MATURITY, MarketData, funding_bp, market_from_data
+from web.options import GREEKS, MONITORING, Terms
 from web.registry import Product
 
 CATALOG = {s.name: s for s in COUPON_NOTE_CATALOG}
@@ -38,6 +40,8 @@ SOLVE_BOUNDS = {
     "barrier": (1.0, 150.0),
     "autocall_level": (40.0, 200.0),
     "coupon_level": (0.0, 150.0),
+    "strike": (10.0, 200.0),
+    "step_down": (0.0, 50.0),
 }
 Rows = list[dict[str, Any]]
 
@@ -267,11 +271,113 @@ def result_json(result: CouponNoteMonteCarlo) -> dict[str, Any]:
     }
 
 
-def legs_rows(result: dict[str, Any]) -> list[list[Any]]:
-    """Legs on common paths, then the total: name, value, standard error."""
-    rows = [[name, v, se] for name, (v, se) in zip(LEG_NAMES, result["legs"], strict=True)]
-    rows.append(["Total", *result["total"]])
+def _brick_terms(note: CouponNote) -> dict[str, str]:
+    first = note.observations[0]
+    condition = f" if at or above {first.coupon_level:g} %" if first.coupon_level > 0.0 else ""
+    memory = " · memory" if note.memory else ""
+    calls = [o.autocall_level for o in note.observations if o.autocall_level is not None]
+    call = f"par if at or above {calls[0]:g} %" if calls else ""
+    return dict(
+        zip(
+            LEG_NAMES,
+            (
+                f"{first.coupon:g} % a date{condition}{memory}",
+                call,
+                "par",
+                f"K {note.put_strike:g}% · H {note.protection_barrier:g}%",
+            ),
+            strict=True,
+        )
+    )
+
+
+def brick_rows(
+    note: CouponNote, result: dict[str, Any], greeks: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """The bricks on common paths then the total: price with its error, and Greeks if computed."""
+    terms = _brick_terms(note)
+    legs = (greeks or {}).get("legs", [{}] * len(LEG_NAMES))
+    rows = []
+    for name, (value, se), leg in zip(LEG_NAMES, result["legs"], legs, strict=True):
+        if name == LEG_NAMES[1] and not note.callable:
+            continue
+        rows.append(
+            {
+                "Brick": name,
+                "Terms": terms[name],
+                "Price (%)": value,
+                "Error (%)": se,
+                **{key: leg.get(key) for key in GREEKS},
+            }
+        )
+    now = greeks_now(greeks)[0] if greeks else dict.fromkeys(GREEKS)
+    rows.append(
+        {
+            "Brick": "Total",
+            "Terms": "",
+            "Price (%)": result["total"][0],
+            "Error (%)": result["total"][1],
+            **now,
+        }
+    )
     return rows
+
+
+def greeks_json(greeks: NoteGreeks, basket: Basket, rows: Rows, notional: float) -> dict[str, Any]:
+    """The numbers of the Monte Carlo Greeks, to keep in the page."""
+    return {
+        "assets": [
+            {
+                "name": a.name,
+                "delta": _estimate(a.delta),
+                "gamma": _estimate(a.gamma),
+                "vega": _estimate(a.vega),
+            }
+            for a in greeks.assets
+        ],
+        "legs": [
+            {
+                "Delta (%)": leg.delta.value,
+                "Gamma (%)": leg.gamma.value,
+                "Vega (%)": leg.vega.value,
+                "Theta (%)": None if leg.theta is None else leg.theta.value,
+                "Rho (%)": leg.rho.value,
+            }
+            for leg in greeks.legs
+        ],
+        "theta": None if greeks.theta is None else _estimate(greeks.theta),
+        "rho": _estimate(greeks.rho),
+        "spots": [m.spot for m in basket.markets],
+        "rows": rows,
+        "notional": notional,
+    }
+
+
+def greeks_now(greeks: dict[str, Any]) -> tuple[dict[str, float | None], dict[str, float]]:
+    """The Greeks of the note, all underlyings together, and their standard errors."""
+
+    def total(key: str) -> tuple[float, float]:
+        values = [a[key] for a in greeks["assets"]]
+        return sum(v for v, _ in values), sum(se**2 for _, se in values) ** 0.5
+
+    delta, gamma, vega = total("delta"), total("gamma"), total("vega")
+    theta, rho = greeks["theta"], greeks["rho"]
+    return (
+        {
+            "Delta (%)": delta[0],
+            "Gamma (%)": gamma[0],
+            "Vega (%)": vega[0],
+            "Theta (%)": None if theta is None else theta[0],
+            "Rho (%)": rho[0],
+        },
+        {
+            "Delta (%)": delta[1],
+            "Gamma (%)": gamma[1],
+            "Vega (%)": vega[1],
+            "Theta (%)": 0.0 if theta is None else theta[1],
+            "Rho (%)": rho[1],
+        },
+    )
 
 
 def schedule_rows(note: CouponNote, result: dict[str, Any] | None) -> list[list[Any]]:
@@ -287,3 +393,22 @@ def schedule_rows(note: CouponNote, result: dict[str, Any] | None) -> list[list[
         ]
         for o, (p, _) in zip(note.observations, calls, strict=True)
     ]
+
+
+def coupon_spec_of(store: dict[str, Any]) -> CouponNoteSpec:
+    """The coupon note of a page's stored terms."""
+    product = registry.find(store.get("slug", ""))
+    spec = coupon_spec(product) if product is not None else None
+    if spec is None:
+        raise ValueError("This page has no coupon note to price.")
+    return spec
+
+
+def setup_coupon(
+    store: dict[str, Any] | None, rows: Rows | None, corr: Rows | None, data: MarketData
+) -> tuple[CouponTerms, Basket]:
+    """The coupon note and the underlyings of a page; ValueError when they cannot be priced."""
+    if not store:
+        raise ValueError("Set the terms of the product.")
+    terms = build_coupon(coupon_spec_of(store), store["terms"], funding_bp(data))
+    return terms, basket_of(list(rows or []), corr, data)

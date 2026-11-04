@@ -20,18 +20,33 @@ with its standard error.
 The home page shows 56 products by family, each with the shape of its payoff; a search box
 and a product finder lead to them. The gear at the top right, or the market line at the top of
 every product page, opens the market: spot, rates, dividends, the issuer's funding spread and
-the implied volatility grid, with its smile and no-arbitrage checks, shared by every page.
+the implied volatility grid, with its skew, its surface in three dimensions and no-arbitrage
+checks, shared by every page.
 
-| Family | Products | On their page |
+| Family | Products | Priced by |
 |---|---|---|
-| **Options & strategies** | calls, puts, spreads, straddles, strangles, butterflies, condors, collars, digitals… | payoff and P&L with breakevens; legs priced on the smile (with the skew of the digitals); Greeks against the spot, against time and of second order, each explained in plain words; static hedges, a delta-hedging simulator and a P&L explain |
-| **Barrier options** | the eight knock-in and knock-out options, shark warrants | the same, with the barrier observed European, American or discrete |
-| **Capital protection** | participation, bearish, shark, bonus, twin-win and digital coupon notes | priced exactly by bricks read on the smile; Greeks; the issuer's hedge; a Monte Carlo check under local volatility; a solver (which participation prices the note at 98 %?) |
+| **Options & strategies** | calls, puts, spreads, straddles, strangles, butterflies, condors, collars, digitals… | closed-form bricks read on the smile |
+| **Barrier options** | the eight knock-in and knock-out options | the same, with the barrier observed European, American or discrete |
+| **Capital protection** | participation, bearish, shark, bonus, twin-win and digital coupon notes, shark warrants | closed-form bricks read on the smile |
 | **Participation certificates** | outperformance, barrier outperformance, bonus, twin-win, airbag, buffer, sprint, reverse bonus | the same, every term free: participation, strike, barrier, optional cap |
-| **Yield enhancement / Autocallables** | discount certificate, reverse convertibles, barrier reverse convertibles, their autocallable versions, Athena and Phoenix | Monte Carlo under local volatility, on one underlying or a worst-of with its correlation matrix; legs on common paths; call probabilities; Greeks per underlying with their errors and the issuer's hedge; notes already alive; solver |
+| **Yield enhancement / Autocallables** | discount certificate, reverse convertibles, barrier reverse convertibles, their autocallable versions, Athena and Phoenix | Monte Carlo under local volatility, on one underlying or a worst-of with its correlation matrix; notes already alive |
 
-Every product has a printable product sheet: payoff chart, what is paid and the P&L at
-maturity with the breakevens, terms, Greeks, decomposition and main risks.
+Every product page has the same structure:
+
+- **Terms**, then a **Price** button: the numbers and the tabs show after it, and say so when
+  the terms or the market have changed since. Under it, a **solver**: the value of one term
+  that gives a target price, written back in the form.
+- **Headline**: the price and the five Greeks (delta, gamma, vega, theta, rho), with their
+  standard errors for a Monte Carlo price.
+- **Payoff**: the chart and what is paid at maturity, with the breakevens.
+- **Decomposition**: each brick with its terms, price and Greeks, adding up to the product.
+- **Greeks**: what each one means today, and each one against the level of the underlying.
+- **Hedging**: shares and listed options that neutralise the delta, the gamma and the vega, for
+  the notional of the terms.
+- A **product sheet**, opened in a new tab to print or download.
+
+Coupon notes add a **Coupon** tab, the observation schedule with the probability of a call at
+each date.
 
 The **product finder** asks for a market view, a volatility view, a horizon, the largest loss
 of capital accepted at maturity (and whether a barrier is acceptable) and the kind of return,
@@ -54,7 +69,7 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 | Hedging noise at equal volatilities | standard deviation 0.424 (daily) and 0.930 (weekly), Derman-Kamal 0.432 and 0.952 | notebook 03 |
 | Taylor P&L explain | residual third order (log-log slope 3.22), step-by-step attribution exact | notebook 03, `tests/test_risk_hedging.py` |
 | Every certificate and note is replicated by its bricks, and worth its expected payoff under the smile's density | payoff gap below 1e-9, value gap below 1e-6 relative | `tests/test_capital_protection.py`, `tests/test_participation.py` |
-| Quality | 1240 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
+| Quality | 1267 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
 
 | | |
 |---|---|
@@ -83,7 +98,11 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
   the down-and-in put sold) are valued on the same paths and add up to the price exactly.
 - **Greeks.** In % of notional, gamma in the "1 % gamma" convention (the change of delta for a
   1 % move). Closed forms or finite differences of closed forms; for Monte Carlo prices, bump
-  and revalue on common random numbers, underlying by underlying, each Greek with its error.
+  and revalue on common random numbers, underlying by underlying and brick by brick, each Greek
+  with its error. Their curves against the level rescale one set of paths: the smile moves with
+  the underlying there, while the Greeks of the day keep the volatility of each strike.
+- **Solving a term.** The search walks away from the current value until the price crosses the
+  target, stops at terms that are not valid, and refuses a price that jumps over the target.
 - **P&L explain.** Taylor expansion at the starting point, never at the arrival; the residual
   is always shown; stress tests are full revaluations.
 - **Web app.** Every callback calls a pure function, tested without a browser; a tab is
@@ -107,7 +126,7 @@ src/spricer/
   packaging.py    equivalent constructions
 web/              Dash app: gallery, product pages, finder, product sheets
 notebooks/        validation, model risk, Greeks and hedging (with outputs)
-tests/            1240 tests
+tests/            1267 tests
 ```
 
 ## Install and run

@@ -103,101 +103,71 @@ def test_sign_changes_ignore_noise():
 # --- Explanations -----------------------------------------------------------------------------
 
 
-def explain(strategy_of_t, name, family, short=False, money=None, knock_out=False, t=1.0):
+def explain(strategy, levels=None, noun="position"):
     spots_pct = np.linspace(50.0, 150.0, 101)
-    profile = spot_profile(strategy_of_t, FLAT, t, spots_pct)
-    now = {k: float(v) for k, v in greeks_at(strategy_of_t(t), FLAT).items()}
-    quarter = float(greeks_at(strategy_of_t(t / 4), FLAT)["Gamma (%)"])
-    situation = gx.Situation(name, family, short, money, knock_out)
-    return _text(*gx.first_order(situation, now, spots_pct, profile, quarter))
+    profile = greeks_at(strategy, FLAT, spots_pct)
+    now = {k: float(v) for k, v in greeks_at(strategy, FLAT).items()}
+    return _text(*gx.greek_cards(noun, now, spots_pct, profile, levels or {}, "today's spot"))
 
 
 def _text(cards, notes) -> str:
-    parts = [f"{c.headline} {' '.join(c.details)}" for c in cards]
+    parts = [f"{c.value} {c.headline} {' '.join(c.details)}" for c in cards]
     return " ".join([*parts, *notes])
 
 
+def test_every_greek_has_a_card():
+    spots = np.linspace(50.0, 150.0, 11)
+    strategy = strat.call(100.0, 1.0)
+    now = {k: float(v) for k, v in greeks_at(strategy, FLAT).items()}
+    cards, notes = gx.greek_cards(
+        "position", now, spots, greeks_at(strategy, FLAT, spots), {}, "today's spot"
+    )
+    assert [c.title for c in cards] == ["Delta", "Gamma", "Vega", "Theta", "Rho"]
+    assert notes == []
+
+
 def test_a_long_atm_call_is_explained():
-    text = explain(lambda t: strat.call(100.0, t), "Call", "vanilla", money=Moneyness.ATM)
-    assert "If the spot rises by 1 %, the position gains" in text
-    assert "close to 50 %" in text
-    assert "1/√T" in text
+    text = explain(strat.call(100.0, 1.0), {"Strike": 100.0})
+    assert "If the underlying rises by 1 %, the position gains" in text
+    assert "next to the strike (100 %)" in text
     assert "Theta pays for gamma" in text
+    assert "helps the position" in text
+    assert "If the rate rises by 1 basis point, the position gains" in text
 
 
 def test_a_short_put_and_a_digital_are_explained():
-    short_put = explain(
-        lambda t: strat.put(100.0, t).short(), "Put", "vanilla", short=True, money=Moneyness.ATM
-    )
-    assert "Short position" in short_put
+    short_put = explain(strat.put(100.0, 1.0).short())
     assert "the position gains" in short_put
-    digital = explain(lambda t: strat.digital_call(100.0, t, 10.0), "Digital call", "digital")
+    assert "costs the position" in short_put
+    digital = explain(strat.digital_call(100.0, 1.0, 10.0))
     assert "changes sign" in digital
-    assert "decides whether it pays" in digital
 
 
 def test_explanations_of_a_worthless_position_and_of_a_far_strike():
-    _, dead = gx.first_order(
-        gx.Situation("Barrier option", "barrier", False),
+    _, dead = gx.greek_cards(
+        "position",
         dict.fromkeys(FIRST_ORDER, 0.0),
         np.linspace(50, 150, 11),
         dict.fromkeys(FIRST_ORDER, np.zeros(11)),
-        None,
+        {},
+        "today's spot",
     )
     assert "worth nothing" in dead[0]
-    deep_put = explain(lambda t: strat.put(160.0, t), "Put", "vanilla", t=2.0)
-    assert "carry" in deep_put
-    flat_value = _text(
-        *gx.first_order(
-            gx.Situation("Zero", "vanilla", False),
-            {
-                "Price (%)": 90.0,
-                "Delta (%)": 0.0,
-                "Gamma (%)": 0.0,
-                "Vega (%)": 0.0,
-                "Theta (%)": 0.01,
-                "Rho (%)": -0.01,
-            },
-            np.linspace(50, 150, 11),
-            dict.fromkeys(FIRST_ORDER, np.zeros(11)),
-            None,
-        )
-    )
-    assert "only the carry" in flat_value
+    assert "carry" in explain(strat.put(160.0, 2.0))
 
 
-def test_a_knock_out_has_a_negative_vega_explained():
-    text = _text(
-        *gx.first_order(
-            gx.Situation("Barrier option", "barrier", False, None, knock_out=True),
-            {
-                "Price (%)": 2.0,
-                "Delta (%)": -10.0,
-                "Gamma (%)": -1.0,
-                "Vega (%)": -0.2,
-                "Theta (%)": 0.01,
-                "Rho (%)": 0.0,
-            },
-            np.linspace(50, 150, 11),
-            {k: np.linspace(-1, 1, 11) for k in FIRST_ORDER},
-            None,
-        )
-    )
-    assert "losing the option" in text
-    assert "the position loses" in text
-
-
-def test_second_order_and_note_readings():
-    cards = gx.second_order({"Vanna": 0.4, "Volga": 0.001, "Charm": -0.02, "Speed": 0.03})
-    assert [c.title for c in cards] == ["Vanna", "Volga", "Charm", "Speed"]
-    assert "+0.40 %" in cards[0].headline
-    assert "gain more and more" in cards[1].details[0]
-    negative = gx.second_order({"Vanna": -0.4, "Volga": -0.001, "Charm": 0.02, "Speed": -0.03})
-    assert "-0.40 %" in negative[0].headline
-    assert "shrinks" in negative[1].details[0]
-    reading = gx.coupon_greeks(["A", "B"], [30.0, -5.0], [-0.3, 0.1])
-    assert "gains 0.30 %" in reading[0]
-    assert "Volatility hurts" in reading[0]
-    assert "loses" in reading[1]
-    assert "Volatility helps" in reading[1]
-    assert "most exposed to **A**" in reading[2]
+def test_monte_carlo_errors_and_a_missing_theta():
+    spots = np.linspace(50.0, 150.0, 11)
+    now = {
+        "Delta (%)": 10.0,
+        "Gamma (%)": -1.0,
+        "Vega (%)": -0.2,
+        "Theta (%)": None,
+        "Rho (%)": 0.0,
+    }
+    noisy = {k: np.sin(spots) for k in FIRST_ORDER}
+    errors = {k: 0.5 for k in FIRST_ORDER}
+    text = _text(*gx.greek_cards("note", now, spots, noisy, {}, "today's level", errors))
+    assert "+10.0 ± 0.5 %" in text
+    assert "falls within the next day" in text
+    assert "changes sign" not in text  # a Monte Carlo gamma crosses zero through noise alone

@@ -108,6 +108,7 @@ def market_panel(data: MarketData) -> dbc.Offcanvas:
             ),
             html.Div(id="market-status", className="mt-2"),
             dcc.Graph(id="smile-graph", config={"displayModeBar": False}),
+            dcc.Graph(id="surface-graph", config={"displaylogo": False}),
             dbc.Button("Reset to the default market", id="market-reset", color="link", n_clicks=0),
         ],
         id="market-panel",
@@ -151,7 +152,7 @@ def smile_figure(market: Market) -> go.Figure:
     fig.update_layout(
         height=260,
         margin={"t": 30, "l": 40, "r": 10, "b": 40},
-        title={"text": "Smile", "font": {"size": 14}},
+        title={"text": "Skew: implied volatility by strike", "font": {"size": 14}},
         xaxis_title="Strike (% of spot)",
         yaxis_title="Vol (%)",
         legend={"orientation": "h", "y": -0.3},
@@ -161,6 +162,43 @@ def smile_figure(market: Market) -> go.Figure:
     )
     fig.update_xaxes(gridcolor="#e6efe2")
     fig.update_yaxes(gridcolor="#e6efe2")
+    return fig
+
+
+def surface_figure(market: Market) -> go.Figure:
+    """Implied volatility against moneyness and maturity, in three dimensions."""
+    fig = go.Figure()
+    surface = market.vol
+    if isinstance(surface, InterpolatedVolSurface):
+        moneyness = np.linspace(50.0, 160.0, 45)
+        maturities = np.geomspace(0.1, max(surface.maturities), 30)
+        strikes = moneyness / 100.0 * market.spot
+        vols = np.array([100.0 * _vols(surface, strikes, float(t)) for t in maturities])
+        fig.add_trace(
+            go.Surface(
+                x=moneyness,
+                y=maturities,
+                z=vols,
+                colorscale=[[0.0, "#1e6b57"], [0.5, "#edf3ea"], [1.0, "#b3261e"]],
+                colorbar={"title": "Vol (%)", "thickness": 12, "len": 0.7},
+                hovertemplate=(
+                    "moneyness %{x:.0f} %<br>maturity %{y:.2f} y<br>vol %{z:.2f} %<extra></extra>"
+                ),
+            )
+        )
+    fig.update_layout(
+        height=460,
+        margin={"t": 30, "l": 0, "r": 0, "b": 0},
+        title={"text": "Volatility surface", "font": {"size": 14}},
+        scene={
+            "xaxis_title": "Moneyness (strike, % of spot)",
+            "yaxis_title": "Maturity (years)",
+            "zaxis_title": "Vol (%)",
+            "camera": {"eye": {"x": -1.6, "y": -1.6, "z": 0.9}},
+        },
+        font={"family": "IBM Plex Sans, Segoe UI, sans-serif", "size": 11, "color": "#1b2a41"},
+        paper_bgcolor="#ffffff",
+    )
     return fig
 
 

@@ -12,7 +12,7 @@ from spricer.monitoring import Monitoring
 from spricer.products.notes import LevelKind
 from spricer.products.participation import SHARK_WARRANTS
 from web import registry
-from web.coupons import CouponTerms, legs_rows, schedule_rows
+from web.coupons import CouponTerms, brick_rows, schedule_rows
 from web.notes import NotePosition, decomposition, desk_greeks, shown_params
 from web.options import Position, display_greeks
 from web.options import decomposition as option_legs
@@ -60,14 +60,13 @@ def option_sheet(position: Position) -> Sheet:
     price = position.price_pct()
     x = np.linspace(50.0, 150.0, 401)
     spots = x / 100.0 * market.spot
-    growth = float(np.exp(market.rate * position.maturity))
     paid = 100.0 * np.asarray(strategy.payoff(spots), dtype=float) / market.spot
     holds = any(isinstance(leg.brick, Underlying) for leg in strategy.legs)
     chart = Chart(
         x,
         [
             ("Paid at maturity", paid, PRIMARY),
-            ("P&L at maturity", paid - price * growth, ACCENT),
+            ("Gain on the price paid", paid - price, ACCENT),
             ("Delta one", x if holds else x - 100.0, GUIDE),
         ],
         [(k, f"K {k:g}%") for k in position.strikes_pct]
@@ -101,7 +100,7 @@ def option_sheet(position: Position) -> Sheet:
     risks.append(
         "Before maturity the value moves with the spot, the volatility and time: see the Greeks."
     )
-    legs = [[r["Leg"], r["Terms"], r["Price (%)"]] for r in option_legs(position)]
+    bricks = [[r["Brick"], r["Terms"], r["Price (%)"]] for r in option_legs(position)]
     return Sheet(
         position.setup.product.family,
         position.name.capitalize(),
@@ -120,7 +119,7 @@ def option_sheet(position: Position) -> Sheet:
         option_breakevens(position),
         terms,
         _greek_rows(display_greeks(strategy, market)),
-        [("Legs", (["Leg", "Terms", "Price (%)"], legs))],
+        [("Brick decomposition", (["Brick", "Terms", "Price (%)"], bricks))],
         risks,
     )
 
@@ -170,7 +169,7 @@ def note_sheet(position: NotePosition) -> Sheet:
             "Barrier: once it is breached the payoff changes for good; a barrier observed "
             "along the path is breached more often than one observed at maturity."
         )
-    legs = [[r["Leg"], r["Terms"], r["Price (%)"]] for r in decomposition(position)]
+    bricks = [[r["Brick"], r["Terms"], r["Price (%)"]] for r in decomposition(position)]
     return Sheet(
         _family(position),
         note.name,
@@ -181,7 +180,7 @@ def note_sheet(position: NotePosition) -> Sheet:
         note_breakevens(position),
         terms,
         _greek_rows(desk_greeks(position.greeks(), position.market.spot)),
-        [("Brick decomposition", (["Leg", "Terms", "Price (%)"], legs))],
+        [("Brick decomposition", (["Brick", "Terms", "Price (%)"], bricks))],
         risks,
     )
 
@@ -203,12 +202,13 @@ def coupon_sheet(
 ) -> Sheet:
     """Sheet of a coupon note priced by Monte Carlo (Greeks when computed)."""
     note, spec = terms.note, terms.spec
-    levels, rows = coupon_scenarios(note)
     price, se = result["total"]
+    levels, rows = coupon_scenarios(note, price)
     x = np.linspace(0.0, 160.0, 481)
-    series = [("Paid, barrier never breached", np.asarray(note.maturity_payoff(x, False)), PRIMARY)]
-    if len(rows) == 2:
-        series.append(("Paid, barrier breached", np.asarray(note.maturity_payoff(x, True)), ACCENT))
+    series = [("Capital paid back", np.asarray(note.redemption(x, False)), PRIMARY)]
+    series.append(("With the final coupon", np.asarray(note.maturity_payoff(x, False)), GUIDE))
+    if len(rows) > 2:
+        series.append(("Capital, barrier breached", np.asarray(note.redemption(x, True)), ACCENT))
     series.append(("Underlying", x, GUIDE))
     chart = Chart(
         x,
@@ -236,6 +236,15 @@ def coupon_sheet(
             (f"Gamma {a['name']}", f"{a['gamma'][0]:+.2f} ± {a['gamma'][1]:.2f} %"),
             (f"Vega {a['name']}", f"{a['vega'][0]:+.3f} ± {a['vega'][1]:.3f} %"),
         ]
+    if greeks:
+        theta, rho = greeks["theta"], greeks["rho"]
+        greek_rows += [
+            (
+                "Theta (per day)",
+                "n/a" if theta is None else f"{theta[0]:+.4f} ± {theta[1]:.4f} %",
+            ),
+            ("Rho (per bp)", f"{rho[0]:+.4f} ± {rho[1]:.4f} %"),
+        ]
     underlyings = [
         [n, m.spot, i, 100.0 * m.dividend_yield]
         for n, m, i in zip(basket.names, basket.markets, basket.initials, strict=True)
@@ -253,7 +262,7 @@ def coupon_sheet(
         note.name,
         spec.description,
         [
-            ("Fair value", f"{price:.2f} %", f"± {se:.2f} (Monte Carlo)"),
+            ("Price", f"{price:.2f} %", f"± {se:.2f} (Monte Carlo)"),
             ("Issuer margin", f"{terms.issue_price - price:+.2f} %", "issue price − value"),
             ("Expected life", f"{result['life'][0]:.2f} y", "until called or matured"),
             ("Probability of loss", f"{100 * result['loss'][0]:.1f} %", "at maturity"),
@@ -282,8 +291,14 @@ def coupon_sheet(
                 ),
             ),
             (
-                "Decomposition on common paths",
-                (["Leg", "Value (%)", "Std error (%)"], legs_rows(result)),
+                "Brick decomposition (common paths)",
+                (
+                    ["Brick", "Terms", "Price (%)", "Std error (%)"],
+                    [
+                        [r["Brick"], r["Terms"], r["Price (%)"], r["Error (%)"]]
+                        for r in brick_rows(note, result, greeks)
+                    ],
+                ),
             ),
         ],
         risks,

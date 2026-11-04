@@ -14,12 +14,11 @@ import numpy as np
 
 from spricer.analytic.barrier import bgk_warning
 from spricer.bricks import BarrierOption, DigitalOption, OneTouch, ZeroCoupon
-from spricer.conventions import Greeks, to_desk
+from spricer.conventions import DAYS_PER_YEAR, Greeks, to_desk
 from spricer.market import Market
-from spricer.mc import NoteMonteCarlo
 from spricer.monitoring import Monitoring
 from spricer.products.capital_protection import NOTE_CATALOG, NoteParam, NoteSpec
-from spricer.products.notes import NOTIONAL, LevelKind, Note, NoteLeg
+from spricer.products.notes import NOTIONAL, Note, NoteLeg
 from spricer.products.participation import (
     PARTICIPATION_CATALOG,
     SHARK_WARRANTS,
@@ -31,7 +30,6 @@ from web.registry import Product
 CATALOG: dict[str, NoteSpec] = {
     s.name: s for s in NOTE_CATALOG + PARTICIPATION_CATALOG + YIELD_CERTIFICATES + SHARK_WARRANTS
 }
-SOLVE_GRID = np.linspace(0.25, 400.0, 1600)  # every term is a level or an amount in %
 # a toggle switches a level on or off: the level is asked only when its toggle is on
 TOGGLED = {"cap": "capped", "floor": "limited"}
 
@@ -101,26 +99,6 @@ class NotePosition:
         t = self.maturity if maturity is None else maturity
         observations = max(1, round(DAILY * t)) if self.monitoring is Monitoring.DISCRETE else None
         return self.spec.build(values, t, self.note.initial, self.monitoring, observations)
-
-    def solve_bounds(self, key: str) -> tuple[float, float]:
-        """Range of ``key`` around its current value where the terms stay valid."""
-        valid = []
-        for x in SOLVE_GRID:
-            try:
-                self.build({**self.values, key: float(x)})
-            except ValueError:
-                valid.append(False)
-            else:
-                valid.append(True)
-        current = int(np.argmin(np.abs(SOLVE_GRID - self.values[key])))
-        if not valid[current]:
-            raise ValueError("the current terms are not valid")
-        low = high = current
-        while low > 0 and valid[low - 1]:
-            low -= 1
-        while high < len(valid) - 1 and valid[high + 1]:
-            high += 1
-        return float(SOLVE_GRID[low]), float(SOLVE_GRID[high])
 
     def at(self, maturity: float) -> Note:
         """The same note with ``maturity`` years left."""
@@ -201,20 +179,6 @@ def desk_greeks(g: Greeks, spot: float) -> dict[str, float]:
     }
 
 
-def level_name(note: Note, strike: float) -> str:
-    """Term-sheet name of an absolute strike or barrier of the note."""
-    pct = 100.0 * strike / note.initial
-    names = [
-        lv.name
-        for lv in note.levels
-        if lv.kind is LevelKind.PERFORMANCE and math.isclose(lv.value_pct, pct)
-    ]
-    if names:
-        return " / ".join(names)
-    roles = [leg.role for leg in note.legs if leg.brick.strike == strike]
-    return roles[0] if roles else f"Level {pct:g}%"
-
-
 def leg_terms(note: Note, leg: NoteLeg, market: Market) -> str:
     """Terms of a leg: strike, barrier, amount or participation, volatility."""
     brick = leg.brick
@@ -240,93 +204,52 @@ def leg_terms(note: Note, leg: NoteLeg, market: Market) -> str:
 
 
 def decomposition(position: NotePosition) -> list[dict[str, Any]]:
-    """Every leg then the total, in % of notional: price, skew, Greeks."""
+    """Every brick then the total, in % of notional: price and Greeks."""
     note, market, spread = position.note, position.market, position.spread
-    rows: list[dict[str, Any]] = []
-    for leg, value, g in zip(
-        note.legs, note.leg_values(market, spread), note.leg_greeks(market, spread), strict=True
-    ):
-        brick = leg.brick
-        skew = (
-            leg.quantity
-            * float(brick.skew_adjustment(market))
-            * note.discount_spread(spread, brick.maturity)
-            if isinstance(brick, DigitalOption | BarrierOption | OneTouch)
-            else 0.0
+    rows: list[dict[str, Any]] = [
+        {
+            "Brick": leg.role,
+            "Terms": leg_terms(note, leg, market),
+            "Price (%)": value,
+            **desk_greeks(g, market.spot),
+        }
+        for leg, value, g in zip(
+            note.legs, note.leg_values(market, spread), note.leg_greeks(market, spread), strict=True
         )
-        rows.append(
-            {
-                "Leg": leg.role,
-                "Terms": leg_terms(note, leg, market),
-                "Price (%)": value,
-                "Skew (%)": skew,
-                **desk_greeks(g, market.spot),
-            }
-        )
-    total: dict[str, Any] = {"Leg": "Total", "Terms": ""}
-    for key in ("Price (%)", "Skew (%)", *GREEKS):
+    ]
+    total: dict[str, Any] = {"Brick": "Total", "Terms": ""}
+    for key in ("Price (%)", *GREEKS):
         total[key] = sum(r[key] for r in rows)
     rows.append(total)
     return rows
 
 
-def smile_levels(position: NotePosition) -> list[dict[str, Any]]:
-    """Where each strike sits on today's smile, and its volatility."""
-    note, market = position.note, position.market
-    return [
-        {
-            "Level": level_name(note, k),
-            "% of initial": 100.0 * k / note.initial,
-            "% of spot": 100.0 * k / market.spot,
-            "Volatility (%)": 100.0 * float(market.vol.vol(k, note.maturity)),
-        }
-        for k in note.strikes
-    ]
-
-
-def monte_carlo_rows(position: NotePosition, mc: NoteMonteCarlo) -> list[dict[str, Any]]:
-    """Closed form against Monte Carlo, leg by leg then in total."""
-    note, market, spread = position.note, position.market, position.spread
-    pairs = list(
-        zip((leg.role for leg in note.legs), note.leg_values(market, spread), mc.legs, strict=True)
-    )
-    pairs.append(("Total", position.value(), mc.total))
-    rows = []
-    for name, closed, est in pairs:
-        # a leg without randomness (the zero-coupon) has no error to measure the gap in
-        gap = (est.value - closed) / est.std_error if est.std_error > 1e-9 else None
-        rows.append(
-            {
-                "Leg": name,
-                "Closed form (%)": closed,
-                "Monte Carlo (%)": est.value,
-                "Std error (%)": est.std_error,
-                "Gap (s.e.)": gap,
-            }
-        )
-    return rows
-
-
 # --- Greeks against the spot -------------------------------------------------------------------
 
-PROFILE = ("Price (%)", "Delta (%)", "Gamma (%)", "Vega (%)")
+PROFILE = ("Price (%)", "Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)")
 _H = 0.01  # spot bump, relative
 _H_VOL = 0.01  # volatility bump
+_H_RATE = 1e-4  # rate bump
 
 
 def spot_profile(position: NotePosition, perf_pct: np.ndarray) -> dict[str, np.ndarray]:
-    """Price, delta, gamma and vega against the underlying's level (% of initial).
+    """Price and Greeks against the underlying's level (% of initial).
 
-    Finite differences of the closed form: spot ±1 %, volatility ±1 point (sticky strike).
+    Finite differences of the closed form: spot ±1 %, volatility ±1 point (sticky strike), one
+    calendar day, rate ±1 basis point.
     """
     note, market, spread = position.note, position.market, position.spread
     s = perf_pct / 100.0 * note.initial
 
-    def v(m: Market, x: np.ndarray) -> np.ndarray:
-        return np.asarray(note.value(m, spread, x), dtype=np.float64)
+    def v(m: Market, x: np.ndarray, n: Note = note) -> np.ndarray:
+        return np.asarray(n.value(m, spread, x), dtype=np.float64)
 
     mid, up, down = v(market, s), v(market, s * (1 + _H)), v(market, s * (1 - _H))
     vol_up, vol_down = v(market.with_vol_shift(_H_VOL), s), v(market.with_vol_shift(-_H_VOL), s)
+    rho_up = v(market.with_rate(market.rate + _H_RATE), s)
+    rho_down = v(market.with_rate(market.rate - _H_RATE), s)
+    day = min(1.0 / DAYS_PER_YEAR, 0.5 * position.maturity)
+    later = v(market, s, position.at(position.maturity - day))
     delta = (up - down) / (2 * _H)  # % of notional per 100 % move: the desk Delta (%)
     gamma = (up - 2 * mid + down) / _H**2 / 100.0  # change of Delta (%) for +1 % spot
     return {
@@ -334,4 +257,6 @@ def spot_profile(position: NotePosition, perf_pct: np.ndarray) -> dict[str, np.n
         "Delta (%)": delta,
         "Gamma (%)": gamma,
         "Vega (%)": (vol_up - vol_down) / 2.0,
+        "Theta (%)": (later - mid) / (day * DAYS_PER_YEAR),
+        "Rho (%)": (rho_up - rho_down) / 2.0,
     }

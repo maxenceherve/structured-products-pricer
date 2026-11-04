@@ -7,7 +7,7 @@ import pytest
 
 from spricer.conventions import DAYS_PER_YEAR
 from spricer.market import Basket, FlatVol, Market
-from spricer.mc.greeks import DELTA_BUMP, GAMMA_BUMP, coupon_note_greeks
+from spricer.mc.greeks import DELTA_BUMP, GAMMA_BUMP, coupon_note_greeks, coupon_note_profile
 from spricer.monitoring import Monitoring
 from spricer.products.coupon_notes import (
     CouponNote,
@@ -109,3 +109,43 @@ def test_theta_is_skipped_when_an_observation_falls_within_a_day():
         note.aged(0.01)
     later = note.aged(0.0005)
     np.testing.assert_allclose(later.times, [0.0005, 0.9995])
+
+
+def test_leg_greeks_add_up_to_the_note():
+    note = phoenix(maturity=3.0, frequency=4, coupon_pa=8.0)
+    mc = coupon_note_greeks(note, Basket.single(FLAT), n_paths=4_000, seed=2)
+    for field in ("delta", "gamma", "vega"):
+        total = sum(getattr(leg, field).value for leg in mc.legs)
+        assert total == pytest.approx(getattr(mc.assets[0], field).value)
+    assert mc.theta is not None
+    thetas = [leg.theta.value for leg in mc.legs if leg.theta is not None]
+    assert sum(thetas) == pytest.approx(mc.theta.value)
+    assert sum(leg.rho.value for leg in mc.legs) == pytest.approx(mc.rho.value)
+
+
+def test_a_flat_smile_gives_the_profile_the_greeks_at_today_s_level():
+    """Without a smile, rescaled paths are the paths of another spot."""
+    note = phoenix(maturity=3.0, frequency=4, coupon_pa=8.0)
+    basket = Basket.single(FLAT)
+    mc = coupon_note_greeks(note, basket, n_paths=4_000, seed=0)
+    profile = coupon_note_profile(note, basket, [80.0, 100.0, 120.0], n_paths=4_000, seed=0)
+    assert profile["Price (%)"][1] == pytest.approx(mc.price.value)
+    assert profile["Delta (%)"][1] == pytest.approx(mc.assets[0].delta.value, abs=1e-9)
+    assert profile["Gamma (%)"][1] == pytest.approx(mc.assets[0].gamma.value, abs=1e-9)
+    assert profile["Vega (%)"][1] == pytest.approx(mc.assets[0].vega.value, abs=1e-9)
+    assert mc.theta is not None
+    assert profile["Theta (%)"][1] == pytest.approx(mc.theta.value, abs=1e-9)
+    assert profile["Rho (%)"][1] == pytest.approx(mc.rho.value, abs=1e-9)
+    assert profile["Price (%)"][0] < profile["Price (%)"][2]  # a higher level is worth more
+
+
+def test_the_profile_has_no_theta_when_an_observation_falls_within_a_day():
+    note = phoenix(maturity=1.0, frequency=4, coupon_pa=8.0)
+    close = CouponNote(
+        "Close",
+        (Observation(0.5 / 365.0, 1.0, 0.0), *note.observations),
+        60.0,
+    )
+    profile = coupon_note_profile(close, Basket.single(FLAT), [100.0], n_paths=2_000)
+    assert np.isnan(profile["Theta (%)"][0])
+    assert np.isfinite(profile["Delta (%)"][0])

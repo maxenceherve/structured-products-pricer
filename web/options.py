@@ -1,8 +1,8 @@
 """Options and option strategies of the site: their terms, and the position they build.
 
-A product page keeps its terms as plain JSON (``terms`` and per-strike volatility overrides);
-:func:`build_position` turns them into a priced position on the session market. Amounts are in
-% of the notional, one unit of underlying worth today's spot, as everywhere on the site.
+A product page keeps its terms as plain JSON; :func:`build_position` turns them into a priced
+position on the session market. Amounts are in % of the notional, one unit of underlying worth
+today's spot, as everywhere on the site.
 """
 
 from __future__ import annotations
@@ -22,12 +22,11 @@ from spricer.bricks import (
     ZeroCoupon,
 )
 from spricer.conventions import to_desk
-from spricer.greeks_lab import ATM_BAND, Instrument, Moneyness, moneyness
-from spricer.market import Market, OverriddenVol
+from spricer.greeks_lab import Instrument
+from spricer.market import Market
 from spricer.monitoring import Monitoring
 from spricer.strategies import Family, Leg, Strategy, StrategySpec, find_spec
 from web import registry
-from web.explain import Situation
 from web.registry import Product
 
 Terms = dict[str, Any]
@@ -48,14 +47,6 @@ MONITORING_HELP = (
 )
 GREEKS = ("Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)")
 
-_EXPLAIN_FAMILY = {
-    Family.VERTICAL_SPREADS: "spread",
-    Family.VOLATILITY: "volatility",
-    Family.BUTTERFLIES_CONDORS: "spread",
-    Family.OPTION_AND_UNDERLYING: "spread",
-    Family.DIGITALS: "digital",
-}
-
 
 @dataclass(frozen=True)
 class OptionSetup:
@@ -74,10 +65,7 @@ class OptionSetup:
     barrier_type
         Barrier of a barrier option, None otherwise.
     kind
-        "call" or "put": side of the main option (zones in the money, time profiles).
-    family
-        Family used by the explanations: "vanilla", "digital", "spread", "volatility" or
-        "barrier".
+        "call" or "put": side of a barrier option.
     spec
         The library strategy, None for a barrier option.
     """
@@ -89,7 +77,6 @@ class OptionSetup:
     uses_payout: bool
     barrier_type: BarrierType | None
     kind: str
-    family: str
     spec: StrategySpec | None
 
     def default_terms(self) -> Terms:
@@ -110,7 +97,6 @@ def setup_of(product: Product) -> OptionSetup | None:
     if product.family == registry.OPTIONS:
         spec = find_spec(product.name)
         kind = "put" if "put" in spec.name.lower() else "call"
-        family = _EXPLAIN_FAMILY.get(spec.family, "vanilla")
         return OptionSetup(
             product,
             spec.description,
@@ -119,7 +105,6 @@ def setup_of(product: Product) -> OptionSetup | None:
             spec.uses_payout,
             None,
             kind,
-            family,
             spec,
         )
     if product.family == registry.BARRIERS and product.group != "Sharks":
@@ -135,7 +120,6 @@ def setup_of(product: Product) -> OptionSetup | None:
             False,
             barrier_type,  # type: ignore[arg-type]  # one of BARRIER_TYPES by construction
             kind,
-            "barrier",
             None,
         )
     return None
@@ -157,7 +141,7 @@ def _number(terms: Terms, key: str, label: str, *, positive: bool = True) -> flo
 
 @dataclass(frozen=True)
 class Position:
-    """A priced option position on the session market (volatility overrides applied)."""
+    """A priced option position on the session market."""
 
     setup: OptionSetup
     short: bool
@@ -179,19 +163,6 @@ class Position:
         return f"{'Short' if self.short else 'Long'} {self.setup.product.name.lower()}"
 
     @property
-    def single(self) -> bool:
-        """One strike: the position is in, at or out of the money."""
-        return len(self.strikes_pct) == 1 and self.setup.family != "volatility"
-
-    @property
-    def moneyness(self) -> Moneyness | None:
-        """ATM, ITM or OTM for a single strike, None otherwise."""
-        if not self.single:
-            return None
-        strike = self.strikes_pct[0] / 100.0 * self.market.spot
-        return moneyness(self.setup.kind, strike, self.market, self.maturity)
-
-    @property
     def barrier_crossed(self) -> bool:
         """The barrier of a barrier option is already on the wrong side of today's spot."""
         if self.barrier_pct is None or self.setup.barrier_type is None:
@@ -200,75 +171,12 @@ class Position:
             return self.barrier_pct <= 100.0
         return self.barrier_pct > 100.0
 
-    @property
-    def situation(self) -> Situation:
-        """What the explanations need to know."""
-        barrier = self.setup.barrier_type or ""
-        return Situation(
-            self.setup.product.name,
-            self.setup.family,
-            self.short,
-            self.moneyness,
-            knock_out=barrier.endswith("out"),
-        )
-
-    def atm_bands(self) -> tuple[tuple[float, float], ...]:
-        """Spots (% of today) where each strike is at the money (a quarter of a deviation)."""
-        out = []
-        carry = math.exp((self.market.rate - self.market.dividend_yield) * self.maturity)
-        for k in self.strikes_pct:
-            strike = k / 100.0 * self.market.spot
-            sd = float(self.market.vol.vol(strike, self.maturity)) * math.sqrt(self.maturity)
-            centre = k / carry
-            out.append((centre * math.exp(-ATM_BAND * sd), centre * math.exp(ATM_BAND * sd)))
-        return tuple(out)
-
     def price_pct(self) -> float:
         """Value in % of the notional."""
         return 100.0 * float(self.strategy.value(self.market)) / self.market.spot
 
 
-def smile_vols(setup: OptionSetup, terms: Terms, market: Market) -> list[float | None]:
-    """Volatility (%) the smile gives each strike of the terms, None where a term is invalid."""
-    out: list[float | None] = []
-    try:
-        maturity = _number(terms, "maturity", "The maturity")
-    except ValueError:
-        return [None] * len(setup.strike_labels)
-    for i in range(len(setup.strike_labels)):
-        try:
-            k = _number(terms, f"strike_{i}", "strike")
-        except ValueError:
-            out.append(None)
-            continue
-        out.append(round(100.0 * float(market.vol.vol(k / 100.0 * market.spot, maturity)), 2))
-    return out
-
-
-def _with_overrides(
-    market: Market, strikes_pct: tuple[float, ...], vols: list[Any] | None
-) -> Market:
-    overrides = []
-    for k, typed in zip(strikes_pct, vols or [], strict=False):
-        if typed is None or typed == "":
-            continue
-        try:
-            vol = float(typed)
-        except (TypeError, ValueError):
-            raise ValueError(f"the volatility at {k:g}% must be a number") from None
-        if not (math.isfinite(vol) and vol > 0.0):
-            raise ValueError(f"the volatility at {k:g}% must be positive")
-        overrides.append((k / 100.0 * market.spot, vol / 100.0))
-    if not overrides:
-        return market
-    return Market(
-        market.spot, market.rate, market.dividend_yield, OverriddenVol(market.vol, tuple(overrides))
-    )
-
-
-def build_position(
-    setup: OptionSetup, terms: Terms, vols: list[Any] | None, market: Market
-) -> Position:
+def build_position(setup: OptionSetup, terms: Terms, market: Market) -> Position:
     """The position the terms describe, on ``market``; ValueError with a readable message."""
     maturity = _number(terms, "maturity", "The maturity")
     notional = _number(terms, "notional", "The notional")
@@ -311,16 +219,7 @@ def build_position(
         return strategy.short() if short else strategy
 
     instrument(maturity)  # validates the terms now, not inside a chart
-    return Position(
-        setup,
-        short,
-        maturity,
-        notional,
-        strikes_pct,
-        _with_overrides(market, strikes_pct, vols),
-        instrument,
-        barrier_pct,
-    )
+    return Position(setup, short, maturity, notional, strikes_pct, market, instrument, barrier_pct)
 
 
 # --- Legs --------------------------------------------------------------------------------------
@@ -364,7 +263,7 @@ def display_greeks(item: Strategy | Leg, market: Market) -> dict[str, float]:
 
 
 def decomposition(position: Position) -> list[dict[str, Any]]:
-    """One row per leg and a total row: price, skew and Greeks in % of notional."""
+    """One row per brick and a total row: price and Greeks in % of notional."""
     market, strategy = position.market, position.strategy
     rows: list[dict[str, Any]] = []
     for leg, valuation in zip(strategy.legs, strategy.decompose(market), strict=True):
@@ -372,22 +271,24 @@ def decomposition(position: Position) -> list[dict[str, Any]]:
         terms = []
         if brick.strike is not None:
             terms.append(f"K {100.0 * brick.strike / market.spot:g}%")
+        if isinstance(brick, BarrierOption):
+            terms.append(f"H {100.0 * brick.barrier / market.spot:g}%")
         if isinstance(brick, DigitalOption):
             terms.append(f"pays {100.0 * abs(leg.quantity) / market.spot:g}%")
         vol = brick.implied_vol(market)
+        if vol is not None:
+            terms.append(f"σ {100.0 * vol:.2f}%")
         rows.append(
             {
-                "Leg": leg_name(leg),
+                "Brick": leg_name(leg),
                 "Terms": " · ".join(terms),
-                "Volatility (%)": None if vol is None else 100.0 * vol,
                 "Price (%)": 100.0 * valuation.value / market.spot,
-                "Skew (%)": 100.0 * valuation.skew_adjustment / market.spot,
                 **display_greeks(leg, market),
             }
         )
     if len(rows) > 1:
-        total: dict[str, Any] = {"Leg": "Total", "Terms": "", "Volatility (%)": None}
-        for key in ("Price (%)", "Skew (%)", *GREEKS):
+        total: dict[str, Any] = {"Brick": "Total", "Terms": ""}
+        for key in ("Price (%)", *GREEKS):
             total[key] = sum(r[key] for r in rows)
         rows.append(total)
     return rows

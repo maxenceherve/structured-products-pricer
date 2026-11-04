@@ -10,9 +10,20 @@ from typing import Any
 import dash
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from dash import ALL, Input, Output, State, dcc, html
+from dash import ALL, Input, Output, State, ctx, dcc, html
 
-from web import coupon_page, finder_page, layout, note_page, option_page, registry, risk_panel, ui
+from web import (
+    coupon_page,
+    finder_page,
+    layout,
+    note_page,
+    option_page,
+    registry,
+    risk_panel,
+    sheet_route,
+    solver,
+    ui,
+)
 from web.coupons import coupon_spec
 from web.market import (
     MATURITY,
@@ -52,10 +63,24 @@ def route(pathname: str | None, query: str | None, search: str | None = None) ->
     return layout.not_found(path)
 
 
-def toggle(n_clicks: int | None, link_clicks: list[int | None] | None, is_open: bool) -> bool:
-    """Open or close the market panel: the gear, or a link to it on a product page."""
-    clicked = bool(n_clicks) or any(link_clicks or [])
-    return not is_open if clicked else is_open
+def toggle(clicked: list[dict[str, Any]], is_open: bool) -> bool:
+    """Open or close the market panel when the gear or a link to it was just clicked.
+
+    ``clicked`` is what triggered the callback: only a click (``n_clicks`` above zero on the
+    element that fired) counts. A button kept from an earlier click, or a page that adds a link
+    to the panel, must not open it.
+    """
+    fired = any(t.get("prop_id", "").endswith(".n_clicks") and t.get("value") for t in clicked)
+    return not is_open if fired else is_open
+
+
+def _toggle(*args: Any) -> bool:  # pragma: no cover - reads the Dash context
+    return toggle(list(ctx.triggered), args[-1])
+
+
+def clear_search(_: str | None) -> str:
+    """Leave the search when the user opens a page: the page, not the results, is shown."""
+    return ""
 
 
 def apply_edits(
@@ -85,13 +110,17 @@ def apply_edits(
     return out
 
 
-def market_view(data: MarketData) -> tuple[Any, go.Figure]:
-    """Status message and smile of the session market."""
+def market_view(data: MarketData) -> tuple[Any, go.Figure, go.Figure]:
+    """Status message, skew and volatility surface of the session market."""
     try:
         market = market_from_data(data)
     except ValueError as exc:
-        return layout.market_status(None, str(exc)), go.Figure()
-    return layout.market_status(market, None), layout.smile_figure(market)
+        return layout.market_status(None, str(exc)), go.Figure(), go.Figure()
+    return (
+        layout.market_status(market, None),
+        layout.smile_figure(market),
+        layout.surface_figure(market),
+    )
 
 
 PanelValues = tuple[float, float, float, float, list[dict[str, Any]]]
@@ -134,11 +163,13 @@ def market_summary(data: MarketData) -> Any:
 
 
 def kpis(store: dict[str, Any] | None, data: MarketData) -> Any:
-    """Headline numbers of the product page shown (option or note).
+    """Headline numbers of the product page shown (option or note), once it has been priced.
 
-    A coupon note shows its own, once priced by Monte Carlo.
+    A coupon note writes its own, from its Monte Carlo price.
     """
-    product = registry.find((store or {}).get("slug", ""))
+    if not store:
+        return dash.no_update
+    product = registry.find(store.get("slug", ""))
     if product is not None and coupon_spec(product) is not None:
         return dash.no_update
     try:
@@ -190,7 +221,10 @@ def create_app() -> dash.Dash:
         Input({"type": "open-market", "where": ALL}, "n_clicks"),
         State("market-panel", "is_open"),
         prevent_initial_call=True,
-    )(toggle)
+    )(_toggle)
+    app.callback(Output("search", "value"), Input("url", "pathname"), prevent_initial_call=True)(
+        clear_search
+    )
     app.callback(Output("market-summary", "children"), Input("market-data", "data"))(market_summary)
     app.callback(
         Output("market-data", "data"),
@@ -225,16 +259,31 @@ def create_app() -> dash.Dash:
     app.callback(
         Output("market-status", "children"),
         Output("smile-graph", "figure"),
+        Output("surface-graph", "figure"),
         Input("market-data", "data"),
     )(market_view)
     # every product page: its terms, and one tab shown at a time
     app.callback(
         Output("product-store", "data"),
-        Input(ui.term(ALL), "value"),  # type: ignore[arg-type]
+        Output("priced-market", "data"),
+        Input("price-run", "n_clicks"),
+        State(ui.term(ALL), "value"),  # type: ignore[arg-type]
         State(ui.term(ALL), "id"),  # type: ignore[arg-type]
-        Input({"type": "vol", "index": ALL}, "value"),
         State("url", "pathname"),
-    )(ui.collect)
+        State("market-data", "data"),
+        prevent_initial_call=True,
+    )(ui.price_click)
+    app.callback(Output("product-results", "style"), Input("product-store", "data"))(
+        ui.show_results
+    )
+    app.callback(
+        Output("price-status", "children"),
+        Input(ui.term(ALL), "value"),  # type: ignore[arg-type]
+        Input("market-data", "data"),
+        Input("product-store", "data"),
+        State(ui.term(ALL), "id"),  # type: ignore[arg-type]
+        State("priced-market", "data"),
+    )(ui.price_status)
     app.callback(
         Output({"type": "tab-block", "tab": ALL}, "style"),
         Input("product-tabs", "active_tab"),
@@ -243,13 +292,15 @@ def create_app() -> dash.Dash:
     app.callback(
         Output("product-kpis", "children"),
         Input("product-store", "data"),
-        Input("market-data", "data"),
+        State("priced-market", "data"),
     )(kpis)
     risk_panel.register(app)
+    solver.register(app)
     option_page.register(app)
     note_page.register(app)
     coupon_page.register(app)
     finder_page.register(app)
+    sheet_route.register(app.server)
     return app
 
 

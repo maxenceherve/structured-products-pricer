@@ -1,38 +1,34 @@
-"""Risk & hedging tab, shared by the option and note pages.
+"""Hedging tab, the same on every product page: a static hedge of the Greeks.
 
-A static hedge of the Greeks with the underlying and listed options, and a P&L explain with
-its stress matrix. Both work on a :class:`Subject`: the option position on an option page; on a
-note page, the issuer who sold the note hedges it, and the P&L is the note holder's.
+Shares of the underlying for the delta, listed options for the gamma and the vega, for the
+notional of the terms. It works on :class:`Subject`: the option position on an option page; on
+a note page the issuer who sold the note hedges it, underlying by underlying for a worst-of.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import ALL, Input, Output, State, dcc, html
+import numpy as np
+from dash import Input, Output, dcc, html
 
 from spricer.bricks import EuropeanOption
 from spricer.conventions import Greeks, to_desk
 from spricer.hedging import static_hedge
 from spricer.market import Market
 from spricer.products.notes import NOTIONAL
-from spricer.risk import STEPS, TERMS, Shock, explain, scenario_matrix
 from web import explain as ex
-from web import figures, registry, ui
+from web import registry, ui
+from web.coupons import coupon_spec, underlying_market
 from web.market import MarketData, funding_bp, market_from_data
 from web.notes import NotePosition, build_note, note_spec
 from web.options import Position, build_position, setup_of
 
 HEDGES = ("Delta", "Delta + gamma", "Delta + gamma + vega")
-STATIC, SIMULATOR, PNL = "Static hedge", "Delta-hedging simulator", "P&L explain"
-SPOT_GRID = [-30.0, -20.0, -10.0, -5.0, 0.0, 5.0, 10.0, 20.0, 30.0]
-VOL_GRID = [-10.0, -5.0, 0.0, 5.0, 10.0]
-RISK_VIEWS_FULL = (STATIC, SIMULATOR, PNL)
-TAB = "risk-hedging"
+TAB = "hedging"
 
 
 def resolve(store: dict[str, Any] | None, data: MarketData) -> Position | NotePosition:
@@ -48,7 +44,7 @@ def resolve(store: dict[str, Any] | None, data: MarketData) -> Position | NotePo
         raise ValueError(f"The market data are invalid: {exc}") from None
     setup = setup_of(product)
     if setup is not None:
-        return build_position(setup, store["terms"], store.get("vols"), market)
+        return build_position(setup, store["terms"], market)
     spec = note_spec(product)
     if spec is not None:
         return build_note(spec, store["terms"], market, funding_bp(data))
@@ -57,7 +53,7 @@ def resolve(store: dict[str, Any] | None, data: MarketData) -> Position | NotePo
 
 @dataclass(frozen=True)
 class Subject:
-    """What the risk tab hedges and explains.
+    """What the tab hedges.
 
     Attributes
     ----------
@@ -67,54 +63,80 @@ class Subject:
         The hedged position is short (a market maker or an issuer).
     greeks
         Raw Greeks of one unit of the hedged position.
-    unit
-        Size of a unit in the count typed by the user (1 option, or 100 of notional).
+    units
+        Units in the notional of the terms (options, or lots of 100 of notional).
     desk_notional
         Notional of one unit, to show the Greeks in % (the spot for an option, 100 for a note).
-    market, maturity
-        Today's market and the years left.
-    value
-        Value of the position whose P&L is explained, in %, on a market with years left.
+    market
+        Today's market of the underlying.
     """
 
     hedged: str
     short: bool
     greeks: Greeks
-    unit: float
+    units: float
     desk_notional: float
     market: Market
-    maturity: float
-    value: Callable[[Market, float], float]
 
 
 def subject_of(item: Position | NotePosition) -> Subject:
-    """The risk subject of an option position or of a note."""
+    """The subject of an option position or of a note."""
     if isinstance(item, NotePosition):
         return Subject(
             f"Issuer, short the {item.note.name.lower()}",
             True,
             item.greeks() * -1.0,
-            NOTIONAL,
+            item.notional / NOTIONAL,
             NOTIONAL,
             item.market,
-            item.maturity,
-            item.value,
         )
-    spot, instrument = item.market.spot, item.instrument
-
-    def value(m: Market, t: float) -> float:
-        return 100.0 * float(instrument(t).value(m)) / spot
-
+    spot = item.market.spot
     return Subject(
         f"Position: {item.name}",
         item.short,
         item.strategy.greeks(item.market),
-        1.0,
+        item.notional / spot,
         spot,
         item.market,
-        item.maturity,
-        value,
     )
+
+
+def coupon_subjects(greeks: dict[str, Any], data: MarketData) -> list[Subject]:
+    """The issuer's position in each underlying of a coupon note, from its Monte Carlo Greeks."""
+    out = []
+    for asset, row in zip(greeks["assets"], greeks["rows"], strict=True):
+        market = underlying_market(row, data)
+        spot = market.spot
+        raw = Greeks(
+            -asset["delta"][0] / spot,
+            -100.0 * asset["gamma"][0] / spot**2,
+            -100.0 * asset["vega"][0],
+            np.zeros(()),
+            np.zeros(()),
+        )
+        out.append(
+            Subject(
+                f"Issuer, short the note on {asset['name']}",
+                True,
+                raw,
+                greeks["notional"] / NOTIONAL,
+                NOTIONAL,
+                market,
+            )
+        )
+    return out
+
+
+def subjects_of(
+    store: dict[str, Any] | None, data: MarketData, greeks: dict[str, Any] | None
+) -> list[Subject]:
+    """What a page hedges: one subject, or one per underlying of a coupon note."""
+    product = registry.find((store or {}).get("slug", ""))
+    if product is not None and coupon_spec(product) is not None:
+        if not greeks:
+            raise ValueError("The Greeks of the note are being computed.")
+        return coupon_subjects(greeks, data)
+    return [subject_of(resolve(store, data))]
 
 
 # --- Layout ------------------------------------------------------------------------------------
@@ -143,56 +165,19 @@ def _hedge_option(n: int, kind: str, maturity: float) -> dbc.Row:
     )
 
 
-def _block(view: str, content: list[Any], shown: bool) -> html.Div:
+def hedging_tab() -> html.Div:
+    """Controls and output of the tab."""
     return html.Div(
-        content, id={"type": "risk-block", "view": view}, style=ui.SHOWN if shown else ui.HIDDEN
+        [
+            ui.field("Neutralise", ui.segmented("hedge-target", HEDGES, HEDGES[0])),
+            _hedge_option(1, "call", 0.25),
+            _hedge_option(2, "put", 2.0),
+            dcc.Loading(html.Div(id="hedge-static")),
+        ]
     )
 
 
-def risk_tab(
-    count_label: str, count_default: float, simulator: list[Any] | None = None
-) -> html.Div:
-    """Controls and outputs of the tab; ``simulator`` adds the delta-hedging simulator."""
-    views = [STATIC, *([SIMULATOR] if simulator is not None else []), PNL]
-    static = [
-        dbc.Row(
-            [
-                dbc.Col(ui.field("Neutralise", ui.segmented("hedge-target", HEDGES, HEDGES[0]))),
-                dbc.Col(
-                    ui.field(count_label, ui.number("hedge-options", count_default, 1_000, min=1)),
-                    width=3,
-                ),
-            ]
-        ),
-        _hedge_option(1, "call", 0.25),
-        _hedge_option(2, "put", 2.0),
-        dcc.Loading(html.Div(id="hedge-static")),
-    ]
-    pnl = [
-        dbc.Row(
-            [
-                dbc.Col(ui.field("Spot move (%)", ui.number("pnl-move", -10.0, 1.0))),
-                dbc.Col(ui.field("Volatility move (pts)", ui.number("pnl-vol", 2.0, 0.5))),
-                dbc.Col(ui.field("Days elapsed", ui.number("pnl-days", 7, 1, min=0))),
-                dbc.Col(ui.field("Rate move (bp)", ui.number("pnl-rate", 0.0, 5.0))),
-            ],
-            className="g-2",
-        ),
-        dcc.Loading(html.Div(id="pnl-result")),
-    ]
-    blocks = [_block(STATIC, static, True)]
-    if simulator is not None:
-        blocks.append(_block(SIMULATOR, simulator, False))
-    blocks.append(_block(PNL, pnl, False))
-    return html.Div([html.Div(ui.segmented("risk-view", views, STATIC), className="mb-3"), *blocks])
-
-
 # --- Pure functions behind the callbacks -------------------------------------------------------
-
-
-def risk_blocks(view: str | None, ids: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Show the controls of the chosen risk view."""
-    return [ui.SHOWN if i["view"] == view else ui.HIDDEN for i in ids]
 
 
 def _desk_row(name: Any, g: Greeks, spot: float, notional: float) -> list[Any]:
@@ -202,53 +187,27 @@ def _desk_row(name: Any, g: Greeks, spot: float, notional: float) -> list[Any]:
         ui.fmt(100.0 * float(d.delta), 2),
         ui.fmt(100.0 * float(d.gamma), 3),
         ui.fmt(float(d.vega), 4),
-        ui.fmt(float(d.theta), 4),
     ]
 
 
-def static_view(
-    store: dict[str, Any] | None,
-    data: MarketData,
-    active: str | None,
-    view: str | None,
-    count: float | None,
-    target: str | None,
-    kind1: str | None,
-    strike1: float | None,
-    maturity1: float | None,
-    kind2: str | None,
-    strike2: float | None,
-    maturity2: float | None,
-) -> tuple[Any, dict[str, str], dict[str, str]]:
-    """Static hedge table and its reading, and which hedging options are needed."""
-    needed = HEDGES.index(target) if target in HEDGES else 0
-    rows_shown = (ui.SHOWN if needed >= 1 else ui.HIDDEN, ui.SHOWN if needed >= 2 else ui.HIDDEN)
-    if active != TAB or view != STATIC:
-        return dash.no_update, *rows_shown
-    try:
-        subject = subject_of(resolve(store, data))
-        units = float(count or 0.0) / subject.unit
-        if units < 1e-9:
-            raise ValueError("The size of the position must be positive.")
-        hedges = []
-        options = ((kind1, strike1, maturity1), (kind2, strike2, maturity2))[:needed]
-        for kind, strike, maturity in options:
-            if not strike or not maturity or strike <= 0 or maturity <= 0:
-                raise ValueError("Every hedging option needs a positive strike and maturity.")
-            option = EuropeanOption(
-                "put" if kind == "put" else "call",
-                strike / 100.0 * subject.market.spot,
-                float(maturity),
-            )
-            name = f"{option.kind}s K {strike:g}% {maturity:g}y"
-            hedges.append((name, option.greeks(subject.market)))
-        hedge = static_hedge(subject.greeks, tuple(hedges))
-    except ValueError as exc:
-        return ui.error(str(exc)), *rows_shown
+def _hedge_block(subject: Subject, options: list[tuple[Any, Any, Any]]) -> list[Any]:
+    hedges = []
+    for kind, strike, maturity in options:
+        if not strike or not maturity or strike <= 0 or maturity <= 0:
+            raise ValueError("Every hedging option needs a positive strike and maturity.")
+        option = EuropeanOption(
+            "put" if kind == "put" else "call",
+            strike / 100.0 * subject.market.spot,
+            float(maturity),
+        )
+        hedges.append(
+            (f"{option.kind}s K {strike:g}% {maturity:g}y", option.greeks(subject.market))
+        )
+    hedge = static_hedge(subject.greeks, tuple(hedges))
     spot, notional = subject.market.spot, subject.desk_notional
     rows = [_desk_row(subject.hedged, hedge.position, spot, notional)]
     for leg in hedge.legs:
-        quantity = leg.quantity * units
+        quantity = leg.quantity * subject.units
         verb = "Buy" if quantity > 0 else "Sell"
         label = f"{verb} {abs(quantity):,.0f} {leg.name if leg.name != 'Underlying' else 'shares'}"
         rows.append(
@@ -260,105 +219,56 @@ def static_view(
             )
         )
     rows.append(_desk_row("Total", hedge.hedged, spot, notional))
-    return (
-        html.Div(
-            [
-                ui.table(["", "Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)"], rows, total=True),
-                ui.note(
-                    "Greeks per unit of the position in % of its notional; the quantities are "
-                    "for the whole position. The neutralised Greeks show 0 in the total row."
-                ),
-                ui.bullets(ex.static_reading(hedge, round(units), subject.short)),
-            ]
-        ),
-        *rows_shown,
-    )
+    return [
+        ui.table(["", "Delta (%)", "Gamma (%)", "Vega (%)"], rows, total=True),
+        ui.bullets(ex.static_reading(hedge, round(subject.units), subject.short)),
+    ]
 
 
-def pnl_view(
+def static_view(
     store: dict[str, Any] | None,
     data: MarketData,
+    greeks: dict[str, Any] | None,
     active: str | None,
-    view: str | None,
-    move: float | None,
-    dvol: float | None,
-    days: float | None,
-    dr: float | None,
-) -> Any:
-    """P&L explain for a market move, and the stress matrix."""
-    if active != TAB or view != PNL:
-        return dash.no_update
+    target: str | None,
+    kind1: str | None,
+    strike1: float | None,
+    maturity1: float | None,
+    kind2: str | None,
+    strike2: float | None,
+    maturity2: float | None,
+) -> tuple[Any, dict[str, str], dict[str, str]]:
+    """Static hedge table and its reading, and which hedging options are needed."""
+    needed = HEDGES.index(target) if target in HEDGES else 0
+    rows_shown = (ui.SHOWN if needed >= 1 else ui.HIDDEN, ui.SHOWN if needed >= 2 else ui.HIDDEN)
+    if active != TAB:
+        return dash.no_update, *rows_shown
+    options = [(kind1, strike1, maturity1), (kind2, strike2, maturity2)][:needed]
     try:
-        subject = subject_of(resolve(store, data))
-        shock = Shock(float(move or 0.0), float(dvol or 0.0), float(days or 0.0), float(dr or 0.0))
-        attribution = explain(subject.value, subject.market, subject.maturity, shock)
-        grid = scenario_matrix(
-            subject.value, subject.market, subject.maturity, SPOT_GRID, VOL_GRID, shock.days
-        )
+        subjects = subjects_of(store, data, greeks)
+        blocks = [_hedge_block(subject, options) for subject in subjects]
     except ValueError as exc:
-        return ui.error(str(exc))
-    taylor = [[k, ui.fmt(attribution.terms[k], 4), ui.fmt(attribution.greeks[k], 5)] for k in TERMS]
-    taylor += [
-        [html.B("Taylor total"), ui.fmt(attribution.taylor, 4), ""],
-        [html.B("Full revaluation"), ui.fmt(attribution.full, 4), ""],
-        [html.B("Unexplained"), ui.fmt(attribution.residual, 4), ""],
-    ]
-    steps = [[k, ui.fmt(attribution.steps[k], 4)] for k in STEPS]
-    steps.append(["Total", ui.fmt(sum(attribution.steps.values()), 4)])
-    return html.Div(
-        [
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.H6("Taylor at today's Greeks"),
-                            ui.table(["Term", "P&L (%)", "Greek"], taylor),
-                            ui.note(
-                                "Greeks per 1 % spot, per (1 %)², per vol point, per day, per bp."
-                            ),
-                        ],
-                        md=7,
-                    ),
-                    dbc.Col(
-                        [
-                            html.H6("Step by step (exact)"),
-                            ui.table(["Step", "P&L (%)"], steps, total=True),
-                            ui.note(
-                                "Revalued moving time, then the spot, then the volatility, then "
-                                "the rate."
-                            ),
-                        ],
-                        md=5,
-                    ),
-                ]
-            ),
-            ui.bullets(ex.attribution_reading(attribution)),
-            dcc.Graph(
-                figure=figures.scenario_heatmap_figure(SPOT_GRID, VOL_GRID, grid, shock.days)
-            ),
-            ui.note("Stress test: every cell is a full revaluation, never a Taylor expansion."),
-        ]
+        return ui.error(str(exc)), *rows_shown
+    children: list[Any] = [piece for block in blocks for piece in block]
+    children.append(
+        ui.note(
+            "Quantities for the notional of the terms; Greeks per unit of the position, in % of "
+            "its notional. The neutralised Greeks show 0 in the total row."
+        )
     )
+    return html.Div(children), *rows_shown
 
 
 def register(app: dash.Dash) -> None:
-    """Register the callbacks of the risk tab."""
-    store, market = Input("product-store", "data"), Input("market-data", "data")
-    tab, view = Input("product-tabs", "active_tab"), Input("risk-view", "value")
-    app.callback(
-        Output({"type": "risk-block", "view": ALL}, "style"),
-        Input("risk-view", "value"),
-        State({"type": "risk-block", "view": ALL}, "id"),
-    )(risk_blocks)
+    """Register the callback of the tab."""
     app.callback(
         Output("hedge-static", "children"),
         Output("hedge1-row", "style"),
         Output("hedge2-row", "style"),
-        store,
-        market,
-        tab,
-        view,
-        Input("hedge-options", "value"),
+        Input("product-store", "data"),
+        Input("priced-market", "data"),
+        Input("product-greeks", "data"),
+        Input("product-tabs", "active_tab"),
         Input("hedge-target", "value"),
         *[
             Input(f"hedge{n}-{field}", "value")
@@ -366,14 +276,3 @@ def register(app: dash.Dash) -> None:
             for field in ("kind", "strike", "maturity")
         ],
     )(static_view)
-    app.callback(
-        Output("pnl-result", "children"),
-        store,
-        market,
-        tab,
-        view,
-        Input("pnl-move", "value"),
-        Input("pnl-vol", "value"),
-        Input("pnl-days", "value"),
-        Input("pnl-rate", "value"),
-    )(pnl_view)

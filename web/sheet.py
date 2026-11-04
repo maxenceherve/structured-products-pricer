@@ -61,7 +61,13 @@ ul.risks { max-width: 70ch; margin: 0 auto; line-height: 1.6; }
 .notice { border-left: 3px solid #b3261e; background: #fdf3f2; padding: 8px 12px;
           font-size: 13px; margin: 32px auto 0; max-width: 70ch; color: #7d1a14; }
 .footer { color: #6e7a8c; font-size: 12px; margin-top: 16px; text-align: center; }
-@media print { .page { margin: 0 auto; } }
+.toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 16px; }
+.toolbar button { font: 500 13px 'IBM Plex Sans', sans-serif; color: #1b2a41; background: #fff;
+                  border: 1px solid #bfd1ba; border-radius: 4px; padding: 6px 12px;
+                  cursor: pointer; }
+.toolbar button:hover { background: #edf3ea; }
+.toolbar button:focus-visible { outline: 2px solid #1e6b57; outline-offset: 2px; }
+@media print { .page { margin: 0 auto; } .toolbar { display: none; } }
 """
 
 
@@ -255,8 +261,8 @@ class Sheet:
     risks: Sequence[str] = ()
 
 
-def render(sheet: Sheet, valuation_date: date | None = None) -> str:
-    """The sheet as a self-contained HTML page."""
+def render(sheet: Sheet, toolbar: bool = False, valuation_date: date | None = None) -> str:
+    """The sheet as a self-contained HTML page; ``toolbar`` adds the download and print buttons."""
     day = (valuation_date or date.today()).isoformat()
     figures = "".join(
         f'<div class="figure"><div class="label">{html.escape(label)}</div>'
@@ -269,7 +275,8 @@ def render(sheet: Sheet, valuation_date: date | None = None) -> str:
         if sheet.breakevens
         else ""
     )
-    body = [
+    body = [TOOLBAR.replace("{file}", file_name(sheet.title))] if toolbar else []
+    body += [
         f'<div class="family">{html.escape(sheet.family)}</div>',
         f"<h1>{html.escape(sheet.title)}</h1>",
         f'<p class="subtitle">{html.escape(sheet.description)}</p>',
@@ -308,14 +315,26 @@ def render(sheet: Sheet, valuation_date: date | None = None) -> str:
     )
 
 
+TOOLBAR = """<div class="toolbar">
+<button type="button" onclick="downloadSheet()">Download the sheet</button>
+<button type="button" onclick="window.print()">Print or save as PDF</button>
+</div>
+<script>
+function downloadSheet() {
+  var page = document.documentElement.cloneNode(true);
+  page.querySelectorAll(".toolbar, script").forEach(function (n) { n.remove(); });
+  var blob = new Blob(["<!DOCTYPE html>" + page.outerHTML], {type: "text/html"});
+  var link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "{file}";
+  link.click();
+}
+</script>"""
+
+
 def file_name(title: str) -> str:
     """A safe file name for the sheet."""
     slug = "".join(c.lower() if c.isalnum() else "-" for c in title).strip("-")
     while "--" in slug:
         slug = slug.replace("--", "-")
     return f"{slug}-product-sheet.html"
-
-
-def download(sheet: Sheet) -> dict[str, str]:
-    """What dcc.Download needs to save the sheet."""
-    return {"content": render(sheet), "filename": file_name(sheet.title), "type": "text/html"}

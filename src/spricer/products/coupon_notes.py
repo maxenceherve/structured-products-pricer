@@ -186,19 +186,27 @@ class CouponNote:
             out.append(Level("Autocall barrier", calls[0], LevelKind.PERFORMANCE))
         return tuple(out)
 
-    def maturity_payoff(self, worst_pct: ArrayLike, breached: bool) -> FloatArray:
-        """Payoff at maturity of a note never called, in % of notional (base coupon only).
+    def redemption(self, worst_pct: ArrayLike, breached: bool) -> FloatArray:
+        """Capital paid back at maturity by a note never called, in % of notional, no coupon.
 
         ``breached`` says whether the barrier was breached before maturity (path observation);
         a final performance below the barrier is a breach in any case.
         """
         p = np.asarray(worst_pct, dtype=np.float64)
-        final = self.observations[-1]
-        coupon = np.where(p >= final.coupon_level, final.coupon, 0.0)
         # ending below the barrier is a breach whatever the observation (maturity is observed)
         hit = (p < self.protection_barrier) | breached | self.barrier_breached
         loss = np.where(hit, np.maximum(self.put_strike - p, 0.0) / self.put_strike, 0.0)
-        return np.asarray(NOTIONAL * (1.0 - loss) + coupon)
+        return np.asarray(NOTIONAL * (1.0 - loss))
+
+    def maturity_payoff(self, worst_pct: ArrayLike, breached: bool) -> FloatArray:
+        """Payoff at maturity of a note never called, in % of notional (base coupon only).
+
+        The capital of :meth:`redemption`, plus the final coupon if its condition holds: a
+        conditional coupon makes the payoff step up at the coupon level.
+        """
+        p = np.asarray(worst_pct, dtype=np.float64)
+        final = self.observations[-1]
+        return self.redemption(p, breached) + np.where(p >= final.coupon_level, final.coupon, 0.0)
 
     def replication(self, initial: float) -> Note | None:
         """Exact bricks of a note that cannot be called and pays certain coupons, else None.

@@ -215,3 +215,9 @@ a:hover { color: var(--ink); }
 .offcanvas { background: var(--paper); border-left: 1px solid var(--rule); }
 .offcanvas-title { font-family: var(--serif); font-weight: 600; font-size: 21px; }
 .d-contents { display: contents; }
+
+/* The solver, at the bottom of the terms form */
+.solve-block { padding: 10px 12px; background: var(--ledger); border: 1px solid var(--rule); border-radius: 4px; }
+.headline-row .kpi-value { font-size: 18px; }
+.headline-row .col:first-child .kpi { border-left: 0; padding-left: 0; }
+.price-status .field-help { margin: 6px 0 0; color: var(--ink); font-weight: 500; }

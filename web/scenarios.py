@@ -27,7 +27,7 @@ def levels_grid(key: list[float], low: float, high: float, step: float = 10.0) -
 
 
 def option_scenarios(position: Position) -> tuple[list[float], Rows]:
-    """Paid at maturity and P&L (paid minus the premium compounded) of an option position."""
+    """Paid at maturity by an option position, and the gain or loss on its price today."""
     market, strategy = position.market, position.strategy
     key = list(position.strikes_pct)
     if position.barrier_pct is not None:
@@ -35,7 +35,7 @@ def option_scenarios(position: Position) -> tuple[list[float], Rows]:
     levels = levels_grid(key, 60.0, 140.0)
     spots = np.array(levels) / 100.0 * market.spot
     scale = 100.0 / market.spot
-    premium = float(strategy.value(market)) * float(np.exp(market.rate * strategy.maturity))
+    premium = float(strategy.value(market))
     brick = strategy.legs[0].brick
     if isinstance(brick, BarrierOption) and brick.monitoring is not Monitoring.EUROPEAN:
         quantity = strategy.legs[0].quantity
@@ -47,13 +47,13 @@ def option_scenarios(position: Position) -> tuple[list[float], Rows]:
         return levels, [
             ("Paid if the barrier was never touched", list(scale * never)),
             ("Paid if it was touched", list(scale * touched)),
-            ("P&L if never touched", list(scale * (never - premium))),
-            ("P&L if touched", list(scale * (touched - premium))),
+            ("Gain if never touched", list(scale * (never - premium))),
+            ("Gain if touched", list(scale * (touched - premium))),
         ]
     paid = np.asarray(strategy.payoff(spots), dtype=np.float64)
     return levels, [
         ("Paid at maturity", list(scale * paid)),
-        ("P&L at maturity", list(scale * (paid - premium))),
+        ("Gain on the price paid", list(scale * (paid - premium))),
     ]
 
 
@@ -69,18 +69,43 @@ def note_scenarios(position: NotePosition) -> tuple[list[float], Rows]:
     ]
 
 
-def coupon_scenarios(note: CouponNote) -> tuple[list[float], Rows]:
-    """Paid at maturity by a coupon note never called (both cases for a path barrier)."""
+def _certain_coupons(note: CouponNote) -> float:
+    """Coupons sure to be paid before maturity on a note never called."""
+    return sum(o.coupon for o in note.observations[:-1] if o.coupon_level == 0.0)
+
+
+def coupon_scenarios(note: CouponNote, price: float | None = None) -> tuple[list[float], Rows]:
+    """Paid at maturity by a coupon note never called (both cases for a path barrier).
+
+    With its ``price``, the gain or loss on that price, counting the coupons that are certain.
+    """
     levels = levels_grid([lv.value_pct for lv in note.levels], 40.0, 160.0)
     perf = np.array(levels)
     never = np.asarray(note.maturity_payoff(perf, False), dtype=np.float64)
+    extra = 0.0 if price is None else _certain_coupons(note) - price
     if note.monitoring is Monitoring.EUROPEAN or note.barrier_breached:
-        return levels, [("Paid at maturity", list(never))]
+        rows = [("Paid at maturity", list(never))]
+        if price is not None:
+            rows.append(("Gain on the price paid", list(never + extra)))
+        return levels, rows
     breached = np.asarray(note.maturity_payoff(perf, True), dtype=np.float64)
-    return levels, [
+    rows = [
         ("Paid, barrier never breached", list(never)),
         ("Paid, barrier breached during the life", list(breached)),
     ]
+    if price is not None:
+        rows += [
+            ("Gain if never breached", list(never + extra)),
+            ("Gain if breached", list(breached + extra)),
+        ]
+    return levels, rows
+
+
+def coupon_breakevens(note: CouponNote, price: float) -> list[float]:
+    """Final worst performances where a coupon note never called gives back its price."""
+    fine = np.linspace(0.0, 200.0, 40001)
+    paid = np.asarray(note.maturity_payoff(fine, False), dtype=np.float64)
+    return breakevens(list(fine), list(paid + _certain_coupons(note) - price))
 
 
 def breakevens(levels: list[float], values: list[float]) -> list[float]:
@@ -91,7 +116,7 @@ def breakevens(levels: list[float], values: list[float]) -> list[float]:
 
 
 def option_breakevens(position: Position) -> list[float]:
-    """Spots (% of today) where the P&L at maturity crosses zero.
+    """Spots (% of today) where the gain at maturity crosses zero.
 
     On a fine grid, so that a payoff that jumps (a digital) crosses zero at its jump; for a
     barrier observed along the path, the P&L if the barrier was never touched.
@@ -100,10 +125,9 @@ def option_breakevens(position: Position) -> list[float]:
     if len(rows) > 2:
         return breakevens(levels, rows[2][1])
     market, strategy = position.market, position.strategy
-    growth = float(np.exp(market.rate * strategy.maturity))
     fine = np.linspace(50.0, 150.0, 20001)
     paid = 100.0 * np.asarray(strategy.payoff(fine / 100.0 * market.spot), dtype=float)
-    return breakevens(list(fine), list(paid / market.spot - position.price_pct() * growth))
+    return breakevens(list(fine), list(paid / market.spot - position.price_pct()))
 
 
 def note_breakevens(position: NotePosition) -> list[float]:

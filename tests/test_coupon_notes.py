@@ -24,7 +24,7 @@ from spricer.products.coupon_notes import (
     reverse_convertible,
     schedule,
 )
-from spricer.solve import solve_coupon_note, solve_note
+from spricer.solve import solve_coupon_note, solve_note, solve_on_grid
 
 N_SE = 4.0
 FLAT = Market(100.0, 0.03, 0.02, FlatVol(0.22))
@@ -431,3 +431,47 @@ def test_solving_the_participation_of_a_capital_protected_note(market):
         lambda p: spec.build({"participation": p}, 3.0, 100.0), market, at_high, (0.0, 50.0)
     )
     assert top.value == 50.0
+
+
+def test_redemption_is_the_capital_alone():
+    phx = phoenix(maturity=3.0, frequency=4, coupon_pa=8.0)
+    levels = [50.0, 65.0, 75.0, 120.0]
+    np.testing.assert_allclose(phx.redemption(levels, False), [50.0, 100.0, 100.0, 100.0])
+    np.testing.assert_allclose(phx.maturity_payoff(levels, False), [50.0, 100.0, 102.0, 102.0])
+
+
+def solve_grid():
+    return np.linspace(0.0, 200.0, 41)
+
+
+def test_solve_on_grid_finds_the_nearest_crossing():
+    # a strangle-like price: two values of the term give the target, the nearest one is taken
+    def price(x):
+        return (x - 100.0) ** 2
+
+    assert solve_on_grid(price, 100.0, solve_grid(), 120.0).value == pytest.approx(110.0, abs=1e-5)
+    assert solve_on_grid(price, 100.0, solve_grid(), 80.0).value == pytest.approx(90.0, abs=1e-5)
+    start = solve_on_grid(price, 400.0, solve_grid(), 120.0)
+    assert start.value == 120.0
+    assert start.price == 400.0
+
+
+def test_solve_on_grid_stops_at_invalid_terms():
+    def price(x):
+        if x < 50.0:
+            raise ValueError("the barrier must stay below the strike")
+        return x
+
+    assert solve_on_grid(price, 60.0, solve_grid(), 100.0).value == pytest.approx(60.0, abs=1e-5)
+    with pytest.raises(ValueError, match="no term gives a price of 20"):
+        solve_on_grid(price, 20.0, solve_grid(), 100.0, "term")
+    with pytest.raises(ValueError, match="must stay below"):
+        solve_on_grid(price, 60.0, solve_grid(), 10.0)
+
+
+def test_solve_on_grid_refuses_a_price_that_jumps_over_the_target():
+    def price(x):
+        return 10.0 if x < 100.0 else 20.0
+
+    with pytest.raises(ValueError, match="jumps over the target"):
+        solve_on_grid(price, 15.0, solve_grid(), 50.0, "barrier")

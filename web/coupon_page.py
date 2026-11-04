@@ -1,8 +1,8 @@
 """Product page of a coupon note: reverse convertibles and autocalls, on one or several stocks.
 
-The note is priced by Monte Carlo under the local volatility of each underlying's smile, when
-the user clicks Price. Tabs: Payoff (if never called), Legs (on common paths, with the closed
-form when there is one), Life (when the note ends), Greeks (by bump and revalue) and Solve for.
+The note is priced by Monte Carlo under the local volatility of each underlying's smile, on the
+Price button. Tabs: Payoff, Coupon (the observation schedule), Decomposition, Greeks and
+Hedging, as on every product page, each number with its Monte Carlo error.
 """
 
 from __future__ import annotations
@@ -13,42 +13,52 @@ from typing import Any
 import dash
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
-from dash import ALL, Input, Output, State, ctx, dcc, html
+import numpy as np
+from dash import Input, Output, State, ctx, dcc, html
 
 from spricer.mc.coupon_notes import price_coupon_note
-from spricer.mc.greeks import DELTA_BUMP, GAMMA_BUMP, coupon_note_greeks
+from spricer.mc.greeks import DELTA_BUMP, GAMMA_BUMP, coupon_note_greeks, coupon_note_profile
 from spricer.mc.paths import Z_95
-from spricer.monitoring import Monitoring
 from spricer.products.coupon_notes import FREQUENCIES, CouponNoteSpec
-from spricer.solve import solve_coupon_note
 from web import explain as ex
-from web import figures, sheet, ui
+from web import figures, risk_panel, sheet_route, ui
 from web.coupons import (
-    SOLVE_BOUNDS,
     UNDERLYING_FIELDS,
-    CouponTerms,
     Rows,
     add_underlying,
     basket_of,
+    brick_rows,
     build_coupon,
     correlation_rows,
     coupon_spec,
+    coupon_spec_of,
     default_terms,
     default_underlyings,
-    legs_rows,
+    greeks_json,
+    greeks_now,
     nearest_rows,
     result_json,
     schedule_rows,
+    setup_coupon,
 )
-from web.market import MarketData, default_data, funding_bp
+from web.market import MarketData, default_data
 from web.registry import Product
-from web.scenarios import coupon_scenarios
-from web.sheets import coupon_sheet
+from web.scenarios import coupon_breakevens, coupon_scenarios
 
 PATHS = (20_000, 50_000, 100_000)
+PROFILE_PATHS = 20_000
 HEADERS = ("Name", "Spot", "Initial", "Div. %", "ATM vol %")
-STALE = "The terms or the market changed since the last price: click Price again."
-NOT_PRICED = "Click Price to run the Monte Carlo."
+PRICING = "Pricing by Monte Carlo..."
+COMPUTING = "Computing the Greeks by Monte Carlo (about ten revaluations)..."
+PROFILE_LEVELS = np.linspace(40.0, 160.0, 25)
+AXIS = "today's level of the underlyings"
+SCHEDULE_HEADER = [
+    "Date (years)",
+    "Coupon (%)",
+    "Coupon barrier (%)",
+    "Autocall barrier (%)",
+    "Call probability (%)",
+]
 
 
 # --- Layout ------------------------------------------------------------------------------------
@@ -74,12 +84,20 @@ def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
         if p.kind == "toggle":
             control: Any = dbc.Switch(id=term(p.key), label=p.label, value=bool(p.default))
             params.append(dbc.Col(html.Div(control, className="pt-4"), xs=6))
-            continue
-        label = p.label if p.kind == "count" else f"{p.label} (%)"
-        step = 1 if p.kind == "count" else 0.5
-        params.append(
-            dbc.Col(ui.field(label, ui.number(term(p.key), terms[p.key], step, min=0)), xs=6)
-        )
+        elif p.kind == "count":
+            params.append(
+                dbc.Col(ui.field(p.label, ui.number(term(p.key), terms[p.key], 1, min=0)), xs=6)
+            )
+        else:
+            params.append(
+                dbc.Col(
+                    ui.field(
+                        p.label if "%" in p.label else f"{p.label} (%)",
+                        ui.number(term(p.key), terms[p.key], 0.5, min=0),
+                    ),
+                    xs=6,
+                )
+            )
     alive = dbc.Accordion(
         dbc.AccordionItem(
             [
@@ -128,17 +146,6 @@ def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
                         "Maturity (years)", ui.number(term("maturity"), terms["maturity"], 0.25)
                     )
                 ),
-                dbc.Col(
-                    ui.field(
-                        "Observations", ui.select(term("frequency"), list(FREQUENCIES), "Quarterly")
-                    )
-                ),
-            ],
-            className="g-2",
-        ),
-        dbc.Row(
-            [
-                dbc.Col(ui.field("Issue price (%)", ui.number(term("issue_price"), 100.0, 0.5))),
                 dbc.Col(ui.field("Notional", ui.number(term("notional"), terms["notional"], 1e5))),
             ],
             className="g-2",
@@ -147,20 +154,23 @@ def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
             [
                 dbc.Col(
                     ui.field(
-                        "Funding spread (bp)",
-                        ui.number(term("spread_bp"), None, 5.0, placeholder="= market"),
+                        "Observations", ui.select(term("frequency"), list(FREQUENCIES), "Quarterly")
                     )
                 ),
-                *(
-                    [dbc.Col(ui.monitoring_field("Protection barrier observed", "european"))]
-                    if spec.monitoring_choice
-                    else []
-                ),
+                dbc.Col(ui.field("Issue price (%)", ui.number(term("issue_price"), 100.0, 0.5))),
             ],
             className="g-2",
         ),
+        ui.field(
+            "Funding spread (bp)",
+            ui.number(term("spread_bp"), None, 5.0, placeholder="= market"),
+        ),
         html.Hr(),
         dbc.Row(params, className="g-2"),
+    ]
+    if spec.monitoring_choice:
+        fields.append(ui.monitoring_field("Protection barrier observed", "european"))
+    fields += [
         alive,
         html.Div("Underlyings (the note looks at the worst performance)", className="field-label"),
         underlyings,
@@ -191,20 +201,8 @@ def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
             style=ui.HIDDEN,
         ),
         html.Hr(),
-        dbc.Row(
-            [
-                dbc.Col(ui.select("cn-paths", {n: f"{n:,} paths" for n in PATHS}, 50_000)),
-                dbc.Col(
-                    dbc.Button(
-                        [html.I(className="bi bi-calculator me-1"), "Price"],
-                        id="cn-price",
-                        color="primary",
-                        n_clicks=0,
-                        className="w-100",
-                    )
-                ),
-            ],
-            className="g-2",
+        ui.field(
+            "Monte Carlo paths", ui.select("cn-paths", {n: f"{n:,}" for n in PATHS}, PATHS[1])
         ),
         ui.note(
             "Levels in % of each underlying's initial level, coupons in % of the notional. "
@@ -212,13 +210,14 @@ def _terms_card(spec: CouponNoteSpec, terms: dict[str, Any]) -> dbc.Card:
             "standard error."
         ),
     ]
+    solvable = {p.key: p.label for p in spec.params if p.kind == "pct"}
+    solvable["spread_bp"] = "Funding spread"
+    fields += [
+        ui.price_block(),
+        html.Div(id="cn-price-status", className="price-status"),
+        ui.solver_block(solvable, 98.0, "cn-solve-run"),
+    ]
     return dbc.Card(dbc.CardBody([html.H5("Terms"), *fields]), className="terms-card")
-
-
-def _button(id_: str, icon: str, label: str) -> dbc.Button:
-    return dbc.Button(
-        [html.I(className=f"bi {icon} me-1"), label], id=id_, color="primary", n_clicks=0
-    )
 
 
 def coupon_page(product: Product, prefilled: dict[str, float] | None = None) -> html.Div:
@@ -227,59 +226,26 @@ def coupon_page(product: Product, prefilled: dict[str, float] | None = None) -> 
     assert spec is not None  # the router only sends coupon notes here
     terms = default_terms(spec)
     applied = ui.apply_prefill(terms, prefilled or {})
-    solvable = [p for p in spec.params if p.solvable]
-    solve = html.Div(
-        [
-            ui.note(
-                "Fix every term but one and find the value that prices the note at the issue "
-                "price minus your margin: what a structurer does before quoting. Solved on one "
-                "set of paths, with the Monte Carlo error of the solution."
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        ui.field(
-                            "Term to solve",
-                            ui.select(
-                                "cn-solve-term", {p.key: p.label for p in solvable}, solvable[0].key
-                            ),
-                        )
-                    ),
-                    dbc.Col(ui.field("Margin (%)", ui.number("cn-solve-margin", 2.0, 0.25))),
-                    dbc.Col(
-                        html.Div(_button("cn-solve-run", "bi-bullseye", "Solve"), className="pt-4"),
-                        width="auto",
-                    ),
-                ],
-                className="g-2",
-            ),
-            dcc.Store(id="cn-solution"),
-            dcc.Loading(html.Div(id="cn-solve-result")),
-            ui.apply_button("cn-solve-apply"),
-        ]
-    )
-    greeks = dcc.Loading(html.Div(id="cn-greeks-result"))
     return ui.product_shell(
         product,
         spec.description,
         _terms_card(spec, terms),
         {
             "Payoff": dcc.Loading(html.Div(id="cn-payoff")),
-            "Legs": dcc.Loading(html.Div(id="cn-legs")),
-            "Greeks & hedging": greeks,
-            "Life": dcc.Loading(html.Div(id="cn-life")),
-            "Solve for": solve,
+            "Coupon": dcc.Loading(html.Div(id="cn-coupon")),
+            "Decomposition": dcc.Loading(html.Div(id="cn-decomposition")),
+            "Greeks": dcc.Loading(html.Div(id="cn-greeks-result")),
+            "Hedging": risk_panel.hedging_tab(),
         },
-        kpis=html.Div(
-            [
-                dcc.Store(id="cn-result"),
-                dcc.Store(id="cn-greeks"),
-                html.Div(ui.note(NOT_PRICED), id="cn-kpis"),
-                dcc.Loading(html.Div(id="cn-greeks-kpis", className="mt-2")),
-                dcc.Download(id="cn-sheet-download"),
-            ]
-        ),
+        kpis=html.Div(ui.note(ui.NOT_PRICED), id="cn-kpis"),
         prefilled=applied,
+        stores=[
+            dcc.Store(id="cn-result"),
+            dcc.Store(id="cn-profile"),
+            dcc.Store(id="cn-priced-rows"),
+            dcc.Store(id="cn-priced-corr"),
+            dcc.Store(id="cn-priced-paths"),
+        ],
     )
 
 
@@ -370,91 +336,134 @@ def fingerprint(
     )
 
 
-def _setup(
-    store: dict[str, Any] | None, rows: Rows | None, corr: Rows | None, data: MarketData
-) -> tuple[CouponTerms, Any]:
-    if not store:
-        raise ValueError("Set the terms of the product.")
-    product_spec = coupon_spec_of(store)
-    terms = build_coupon(product_spec, store["terms"], funding_bp(data))
-    return terms, basket_of(list(rows or []), corr, data)
+def priced_underlyings(
+    n_clicks: int | None, rows: Rows | None, corr: Rows | None, paths: Any
+) -> Any:
+    """On the Price button, what is priced besides the terms: the grids and the paths."""
+    if not n_clicks:
+        return dash.no_update, dash.no_update, dash.no_update
+    return rows, corr, paths
 
 
-def coupon_spec_of(store: dict[str, Any]) -> CouponNoteSpec:
-    """The coupon note of a page's stored terms."""
-    from web import registry
+def underlyings_status(
+    rows: Rows | None,
+    corr: Rows | None,
+    paths: Any,
+    store: dict[str, Any] | None,
+    priced_rows: Rows | None,
+    priced_corr: Rows | None,
+    priced_paths: Any,
+) -> Any:
+    """Tell when the numbers on screen are no longer those of the underlyings in the form."""
+    if not store or (rows, corr, paths) == (priced_rows, priced_corr, priced_paths):
+        return ""
+    return ui.note(ui.STALE)
 
-    product = registry.find(store.get("slug", ""))
-    spec = coupon_spec(product) if product is not None else None
-    if spec is None:
-        raise ValueError("This page has no coupon note to price.")
-    return spec
 
-
-def price_view(
-    n_clicks: int | None,
+def price_compute(
     store: dict[str, Any] | None,
     rows: Rows | None,
     corr: Rows | None,
     data: MarketData,
     paths: Any,
-) -> tuple[Any, Any]:
-    """Monte Carlo price of the note: the result kept in the page, and the headline numbers."""
-    if not n_clicks:
-        return dash.no_update, dash.no_update
+) -> dict[str, Any] | None:
+    """Monte Carlo price of the terms, kept in the page; an error is kept the same way."""
+    if not store:
+        return None
     try:
-        terms, basket = _setup(store, rows, corr, data)
+        terms, basket = setup_coupon(store, rows, corr, data)
         result = price_coupon_note(terms.note, basket, terms.spread, n_paths=int(paths or 50_000))
     except ValueError as exc:
-        return None, ui.error(str(exc))
-    kept = result_json(result) | {"fingerprint": fingerprint(store, rows, corr, data, paths)}
-    price, se = kept["total"]
-    life, loss, breach = kept["life"][0], kept["loss"][0], kept["breach"][0]
-    return kept, html.Div(
-        [
-            dbc.Row(
-                [
-                    ui.kpi(
-                        "Price", f"{price:.2f} %", f"± {Z_95 * se:.2f} % at 95 %", featured=True
-                    ),
-                    ui.kpi(
-                        "Issuer margin",
-                        f"{terms.issue_price - price:+.2f} %",
-                        "issue price − fair value",
-                    ),
-                    ui.kpi("Expected life", f"{life:.2f} y", "until called or matured"),
-                    ui.kpi(
-                        "Probability of loss",
-                        f"{100 * loss:.1f} %",
-                        "capital not paid back in full",
-                    ),
-                ],
-                className="g-2",
-            ),
-            ui.note(
-                f"Value of the notional {price / 100.0 * terms.notional:,.0f}. Barrier breached "
-                f"and note alive at maturity on {100 * breach:.1f} % of the paths "
-                f"({kept['paths']:,} paths)."
-            ),
-            ui.sheet_button("cn-sheet-button"),
-        ]
-    )
+        return {"error": str(exc)}
+    return result_json(result) | {"fingerprint": fingerprint(store, rows, corr, data, paths)}
 
 
-def _fresh(result: dict[str, Any] | None, current: str) -> str | None:
-    """None when the result is up to date, else why it cannot be shown."""
-    if not result:
-        return NOT_PRICED
-    if result["fingerprint"] != current:
-        return STALE
-    return None
+def _fresh(result: dict[str, Any] | None, current: str) -> bool:
+    """The result was computed for these terms, and without an error."""
+    return bool(result) and result.get("fingerprint") == current  # type: ignore[union-attr]
 
 
-def payoff_view(
+def greeks_compute(
+    result: dict[str, Any] | None,
     store: dict[str, Any] | None,
     rows: Rows | None,
     corr: Rows | None,
     data: MarketData,
+    paths: Any,
+) -> dict[str, Any] | None:
+    """After a price, the Greeks by bump and revalue, kept in the page."""
+    current = fingerprint(store, rows, corr, data, paths)
+    if not _fresh(result, current):
+        return None
+    try:
+        terms, basket = setup_coupon(store, rows, corr, data)
+        greeks = coupon_note_greeks(terms.note, basket, terms.spread, n_paths=int(paths or 50_000))
+    except ValueError:
+        return None
+    return greeks_json(greeks, basket, rows or [], terms.notional) | {"fingerprint": current}
+
+
+def kpis_view(
+    result: dict[str, Any] | None,
+    greeks: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+    rows: Rows | None,
+    corr: Rows | None,
+    data: MarketData,
+    paths: Any,
+) -> Any:
+    """Price and Greeks of the note, once they are computed."""
+    if not store:
+        return ui.note(ui.NOT_PRICED)
+    if result and "error" in result:
+        return ui.error(result["error"])
+    current = fingerprint(store, rows, corr, data, paths)
+    if not _fresh(result, current):
+        return ui.note(PRICING)
+    assert result is not None
+    terms = build_coupon(coupon_spec_of(store or {}), (store or {})["terms"])
+    price, se = result["total"]
+    fresh = _fresh(greeks, current)
+    now, errors = greeks_now(greeks) if fresh else (None, None)  # type: ignore[arg-type]
+    state = {"store": store, "market": data, "rows": rows, "corr": corr, "result": result}
+    if fresh:
+        state["greeks"] = greeks
+    return ui.headline(
+        f"Holder of the {terms.note.name.lower()}",
+        f"{price:.2f} %",
+        f"± {Z_95 * se:.2f} % at 95 %",
+        now,
+        errors,
+        facts=[
+            f"Issuer margin {terms.issue_price - price:+.2f} %",
+            f"Expected life {result['life'][0]:.2f} y",
+            f"Probability of loss {100 * result['loss'][0]:.1f} %",
+            f"Barrier breached at maturity on {100 * result['breach'][0]:.1f} % of the "
+            f"{result['paths']:,} paths",
+        ],
+        sheet=ui.sheet_link(sheet_route.href(state)),
+    )
+
+
+def price_headline(
+    result: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+    rows: Rows | None,
+    corr: Rows | None,
+    data: MarketData,
+    paths: Any,
+) -> Any:
+    """The price as soon as it is there; the Greeks follow (ten more revaluations)."""
+    return kpis_view(result, None, store, rows, corr, data, paths)
+
+
+def payoff_view(
+    result: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+    rows: Rows | None,
+    corr: Rows | None,
+    data: MarketData,
+    paths: Any,
     active: str | None,
 ) -> Any:
     """What the note pays at maturity if never called."""
@@ -470,31 +479,46 @@ def payoff_view(
         today = basket_of(list(rows or []), corr, data).today_worst_pct()
     except ValueError:
         today = 100.0
+    note = terms.note
+    fresh = _fresh(result, fingerprint(store, rows, corr, data, paths))
+    price = result["total"][0] if fresh and result else None
     notes = [
         ui.note(
-            "Coupons paid before maturity are not shown. Without a call the note ends at "
-            "maturity and pays this, against the worst performance of the underlyings."
+            "Without a call the note ends at maturity and pays this, against the worst performance "
+            "of the underlyings. Coupons paid before maturity are not shown; the gain counts those "
+            "that are certain, not those that depend on the underlying."
         )
     ]
-    if terms.note.memory:
+    if note.observations[-1].coupon_level > 0.0:
+        notes.append(
+            ui.note(
+                "The capital is flat above the barrier, as on every coupon note. The final coupon "
+                f"is only paid at or above {note.observations[-1].coupon_level:g} %, hence the "
+                "step of the dashed line; a reverse convertible's coupon is certain: no step."
+            )
+        )
+    if note.memory:
         notes.append(
             ui.note(
                 "With memory, the coupons missed before maturity are paid on top of the final "
                 "coupon shown here when the coupon condition holds."
             )
         )
-    levels, table_rows = coupon_scenarios(terms.note)
+    levels, table_rows = coupon_scenarios(note, price)
+    points = coupon_breakevens(note, price) if price is not None else []
     return html.Div(
         [
-            dcc.Graph(figure=figures.coupon_payoff_figure(terms.note, today)),
+            dcc.Graph(
+                figure=figures.coupon_payoff_figure(note, today), config={"displaylogo": False}
+            ),
             html.H6("Paid at maturity if never called", className="mt-2"),
-            ui.scenario_table("Worst performance", levels, table_rows),
+            ui.scenario_table("Worst performance", levels, table_rows, points),
             *notes,
         ]
     )
 
 
-def legs_view(
+def coupon_view(
     result: dict[str, Any] | None,
     store: dict[str, Any] | None,
     rows: Rows | None,
@@ -503,71 +527,8 @@ def legs_view(
     paths: Any,
     active: str | None,
 ) -> Any:
-    """Legs on common paths, and the closed form when the note has one."""
-    if active != "legs":
-        return dash.no_update
-    why = _fresh(result, fingerprint(store, rows, corr, data, paths))
-    if why:
-        return ui.note(why)
-    assert result is not None
-    body = [[name, f"{v:.3f}", f"{se:.3f}"] for name, v, se in legs_rows(result)]
-    children: list[Any] = [
-        ui.table(["Leg", "Value (%)", "Std error (%)"], body, total=True),
-        ui.note(
-            "Every leg is valued on the same paths, so they add up to the price exactly. The "
-            "last leg is the down-and-in put on the worst performance the holder has sold: what "
-            "pays for the coupon."
-        ),
-    ]
-    terms, basket = _setup(store, rows, corr, data)
-    replication = terms.note.replication(basket.initials[0]) if basket.size == 1 else None
-    if replication is not None:
-        closed = float(replication.value(basket.markets[0], terms.spread))
-        price, se = result["total"]
-        children.append(
-            dbc.Row(
-                [
-                    ui.kpi(
-                        "Closed form", f"{closed:.2f} %", "bond, coupons and a put on the smile"
-                    ),
-                    ui.kpi(
-                        "Monte Carlo − closed form",
-                        f"{price - closed:+.2f} %",
-                        f"{(price - closed) / se:+.1f} standard errors",
-                    ),
-                ],
-                className="g-2 mt-2",
-            )
-        )
-        if terms.note.monitoring is Monitoring.EUROPEAN or terms.note.barrier_breached:
-            children.append(
-                ui.note(
-                    "Same smile on both sides: the gap is Monte Carlo noise, within ±2 standard "
-                    "errors 95 % of the time."
-                )
-            )
-        else:
-            children.append(
-                ui.note(
-                    "The closed form prices the down-and-in put at one volatility, the strike's; "
-                    "the Monte Carlo diffuses on the local volatility of the whole smile. The gap "
-                    "is the smile's effect on the barrier, not noise."
-                )
-            )
-    return html.Div(children)
-
-
-def life_view(
-    result: dict[str, Any] | None,
-    store: dict[str, Any] | None,
-    rows: Rows | None,
-    corr: Rows | None,
-    data: MarketData,
-    paths: Any,
-    active: str | None,
-) -> Any:
-    """When the note ends, and its observation schedule."""
-    if active != "life":
+    """The observation schedule: dates, coupons, barriers, probability of a call."""
+    if active != "coupon":
         return dash.no_update
     try:
         terms = build_coupon(coupon_spec_of(store or {}), (store or {})["terms"])
@@ -575,7 +536,7 @@ def life_view(
         return ui.error(
             str(exc) if isinstance(exc, ValueError) else "Set the terms of the product."
         )
-    fresh = _fresh(result, fingerprint(store, rows, corr, data, paths)) is None
+    fresh = _fresh(result, fingerprint(store, rows, corr, data, paths))
     schedule = schedule_rows(terms.note, result if fresh else None)
     body = [
         [
@@ -587,86 +548,11 @@ def life_view(
         ]
         for t, c, cl, a, p in schedule
     ]
-    children: list[Any] = []
-    if fresh:
-        assert result is not None
-        calls = [100.0 * p for p, _ in result["calls"]]
-        children.append(dcc.Graph(figure=figures.call_probability_figure(terms.note, calls)))
-    else:
-        children.append(ui.note(NOT_PRICED + " The probabilities of a call will show here."))
-    children += [
-        html.H6("Observation schedule", className="mt-2"),
-        ui.table(
-            [
-                "Date (years)",
-                "Coupon (%)",
-                "Coupon barrier (%)",
-                "Autocall barrier (%)",
-                "Call probability (%)",
-            ],
-            body,
-        ),
-    ]
-    return html.Div(children)
+    return html.Div([html.H6("Observation schedule"), ui.table(SCHEDULE_HEADER, body)])
 
 
-def _greeks_json(greeks: Any, basket: Any, notional: float, current: str) -> dict[str, Any]:
-    def est(e: Any) -> list[float]:
-        return [e.value, e.std_error]
-
-    return {
-        "fingerprint": current,
-        "assets": [
-            {"name": a.name, "delta": est(a.delta), "gamma": est(a.gamma), "vega": est(a.vega)}
-            for a in greeks.assets
-        ],
-        "theta": None if greeks.theta is None else est(greeks.theta),
-        "rho": est(greeks.rho),
-        "spots": [m.spot for m in basket.markets],
-        "notional": notional,
-    }
-
-
-def greeks_compute(
+def decomposition_view(
     result: dict[str, Any] | None,
-    store: dict[str, Any] | None,
-    rows: Rows | None,
-    corr: Rows | None,
-    data: MarketData,
-    paths: Any,
-) -> tuple[Any, Any]:
-    """After a price, the Greeks by bump and revalue: kept in the page, and their headline."""
-    current = fingerprint(store, rows, corr, data, paths)
-    if _fresh(result, current):
-        return None, ""
-    try:
-        terms, basket = _setup(store, rows, corr, data)
-        greeks = coupon_note_greeks(terms.note, basket, terms.spread, n_paths=int(paths or 50_000))
-    except ValueError as exc:
-        return None, ui.error(str(exc))
-    kept = _greeks_json(greeks, basket, terms.notional, current)
-
-    def total(key: str) -> tuple[float, float]:
-        values = [a[key] for a in kept["assets"]]
-        return sum(v for v, _ in values), sum(se**2 for _, se in values) ** 0.5
-
-    delta, gamma, vega = total("delta"), total("gamma"), total("vega")
-    several = " (all underlyings)" if len(kept["assets"]) > 1 else ""
-    theta = kept["theta"]
-    cards = [
-        ui.kpi(f"Delta{several}", f"{delta[0]:+.1f} %", f"± {delta[1]:.1f} · per +1 % spot"),
-        ui.kpi(f"Gamma{several}", f"{gamma[0]:+.2f} %", f"± {gamma[1]:.2f} · Δ change per +1 %"),
-        ui.kpi(f"Vega{several}", f"{vega[0]:+.3f} %", f"± {vega[1]:.3f} · per vol point"),
-        ui.kpi(
-            "Theta",
-            "n/a" if theta is None else f"{theta[0]:+.4f} %",
-            "observation within a day" if theta is None else f"± {theta[1]:.4f} · per day",
-        ),
-    ]
-    return kept, dbc.Row(cards, className="g-2")
-
-
-def greeks_view(
     greeks: dict[str, Any] | None,
     store: dict[str, Any] | None,
     rows: Rows | None,
@@ -675,150 +561,131 @@ def greeks_view(
     paths: Any,
     active: str | None,
 ) -> Any:
-    """Greeks per underlying with their errors, the issuer's hedge, and their reading."""
-    if active != "greeks-hedging":
+    """The bricks of the note on common paths: price and Greeks."""
+    if active != "decomposition":
         return dash.no_update
-    why = _fresh(greeks, fingerprint(store, rows, corr, data, paths))
-    if why:
-        return ui.note(
-            why + " The Greeks are computed right after the price (about ten revaluations)."
-        )
-    assert greeks is not None
-    assets = greeks["assets"]
-    body = [
-        [
-            a["name"],
-            ui.fmt(a["delta"][0], 2),
-            f"{a['delta'][1]:.2f}",
-            ui.fmt(a["gamma"][0], 3),
-            f"{a['gamma'][1]:.3f}",
-            ui.fmt(a["vega"][0], 3),
-            f"{a['vega'][1]:.3f}",
-        ]
-        for a in assets
+    if result and "error" in result:
+        return ui.error(result["error"])
+    current = fingerprint(store, rows, corr, data, paths)
+    if not _fresh(result, current):
+        return ui.note(PRICING)
+    assert result is not None
+    terms = build_coupon(coupon_spec_of(store or {}), (store or {})["terms"])
+    fresh = _fresh(greeks, current)
+    children: list[Any] = [
+        ui.bricks_table(brick_rows(terms.note, result, greeks if fresh else None)),
+        ui.note(
+            "Every brick is valued on the same paths, so they add up to the price exactly; the "
+            "price with its Monte Carlo standard error. The down-and-in put is what the holder "
+            "has sold to pay for the coupon. In % of notional: " + ui.GREEK_UNITS_TEXT
+        ),
     ]
-    hedge = []
-    for a, spot in zip(assets, greeks["spots"], strict=True):
-        shares = a["delta"][0] / 100.0 * greeks["notional"] / spot
-        verb = "Buy" if shares >= 0 else "Sell"
-        hedge.append(
-            [
-                html.Span(f"{verb} {abs(shares):,.0f} shares", className=ui.side_class(verb)),
-                a["name"],
-                f"{spot:,.2f}",
-                f"{a['delta'][0] / 100.0 * greeks['notional']:,.0f}",
-            ]
-        )
-    theta = greeks["theta"]
-    theta_text = (
-        "not computed: an observation falls within the next day"
-        if theta is None
-        else f"{theta[0]:+.4f} ± {theta[1]:.4f} % a day"
+    if not fresh:
+        children.append(ui.note(COMPUTING))
+    return html.Div(children)
+
+
+def profile_compute(
+    greeks: dict[str, Any] | None,
+    previous: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+    rows: Rows | None,
+    corr: Rows | None,
+    data: MarketData,
+    active: str | None,
+) -> Any:
+    """The Greeks against the level of the underlyings, when the Greeks tab is shown."""
+    if active != "greeks" or not greeks:
+        return dash.no_update
+    if previous and previous["fingerprint"] == greeks["fingerprint"]:
+        return dash.no_update
+    terms, basket = setup_coupon(store, rows, corr, data)
+    today = basket.today_worst_pct()
+    levels = np.union1d(PROFILE_LEVELS, [round(today, 6)])
+    profile = coupon_note_profile(
+        terms.note,
+        basket,
+        100.0 * levels / today,
+        terms.spread,
+        n_paths=PROFILE_PATHS,
     )
+    return {
+        "fingerprint": greeks["fingerprint"],
+        "levels": levels.tolist(),
+        "today": today,
+        "profile": {k: v.tolist() for k, v in profile.items()},
+    }
+
+
+def greeks_view(
+    greeks: dict[str, Any] | None,
+    profile: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+    rows: Rows | None,
+    corr: Rows | None,
+    data: MarketData,
+    paths: Any,
+    active: str | None,
+) -> Any:
+    """Greeks today, what they mean, and against the level of the underlyings."""
+    if active != "greeks":
+        return dash.no_update
+    current = fingerprint(store, rows, corr, data, paths)
+    if not _fresh(greeks, current):
+        return ui.note(COMPUTING)
+    assert greeks is not None
+    terms = build_coupon(coupon_spec_of(store or {}), (store or {})["terms"])
+    now, errors = greeks_now(greeks)
+    assets = greeks["assets"]
+    children: list[Any] = []
+    if len(assets) > 1:
+        body = [
+            [
+                a["name"],
+                ui.fmt(a["delta"][0], 2),
+                f"{a['delta'][1]:.2f}",
+                ui.fmt(a["gamma"][0], 3),
+                f"{a['gamma'][1]:.3f}",
+                ui.fmt(a["vega"][0], 3),
+                f"{a['vega'][1]:.3f}",
+            ]
+            for a in assets
+        ]
+        children += [
+            html.H6("Per underlying"),
+            ui.table(["Underlying", "Delta (%)", "±", "Gamma (%)", "±", "Vega (%)", "±"], body),
+        ]
+    if not profile or profile["fingerprint"] != greeks["fingerprint"]:
+        x = np.array([100.0])
+        curves = {k: np.array([float(v or 0.0)]) for k, v in now.items()}
+        cards, notes = ex.greek_cards("note", now, x, curves, {}, AXIS, errors)
+        return html.Div([*children, ui.greek_cards(cards, notes), ui.note(COMPUTING)])
+    x = np.array(profile["levels"])
+    curves = {k: np.array(v) for k, v in profile["profile"].items()}
+    levels = {lv.name: lv.value_pct for lv in terms.note.levels}
+    cards, notes = ex.greek_cards("note", now, x, curves, levels, AXIS, errors)
     return html.Div(
         [
-            html.H6("Greeks of the note, per underlying"),
-            ui.table(["Underlying", "Delta (%)", "±", "Gamma (%)", "±", "Vega (%)", "±"], body),
-            ui.note(
-                f"Theta {theta_text}; rho {greeks['rho'][0]:+.4f} ± {greeks['rho'][1]:.4f} % per "
-                "basis point. Each Greek with its Monte Carlo standard error."
-            ),
-            html.H6("The issuer's delta hedge", className="mt-3"),
-            ui.table(["Trade", "Underlying", "Spot", "Exposure"], hedge),
-            ui.note(
-                "The issuer sold the note: it holds the note's delta in shares of each "
-                "underlying, for the whole notional, and rebalances as the deltas move."
-            ),
-            ui.bullets(
-                ex.coupon_greeks(
-                    [a["name"] for a in assets],
-                    [a["delta"][0] for a in assets],
-                    [a["vega"][0] for a in assets],
+            *children,
+            ui.greek_cards(cards, notes),
+            dcc.Graph(
+                figure=figures.greeks_figure(
+                    x,
+                    curves,
+                    profile["today"],
+                    list(levels.values()),
+                    "Worst performance today (% of initial level)",
                 )
             ),
             ui.note(
-                f"Bump and revalue on common random numbers: spot ±{100 * DELTA_BUMP:.0f} % for "
-                f"delta and ±{100 * GAMMA_BUMP:.0f} % for gamma (the payoff jumps at its barriers: "
-                "smaller bumps would be unbiased but far noisier), ±1 volatility point, ±1 bp, one "
-                "day."
+                f"{figures.GREEKS_CAPTION} Curves: every underlying moved together, the smile "
+                "moving with them. Cards: each Greek with its Monte Carlo standard error, by bump "
+                f"and revalue on common random numbers: spot ±{100 * DELTA_BUMP:.0f} % for delta "
+                f"and ±{100 * GAMMA_BUMP:.0f} % for gamma (the payoff jumps at its barriers), ±1 "
+                "volatility point, ±1 bp, one day, the implied volatility of each strike fixed."
             ),
         ]
     )
-
-
-def solve_view(
-    n_clicks: int | None,
-    store: dict[str, Any] | None,
-    rows: Rows | None,
-    corr: Rows | None,
-    data: MarketData,
-    paths: Any,
-    key: str | None,
-    margin: float | None,
-) -> tuple[Any, Any, dict[str, str]]:
-    """Solve a term so that the note is worth the issue price minus the margin."""
-    if not n_clicks:
-        return ui.note("Pick a term and a margin, then Solve."), None, ui.HIDDEN
-    try:
-        terms, basket = _setup(store, rows, corr, data)
-        if key not in SOLVE_BOUNDS:
-            raise ValueError("Pick a term to solve.")
-        target = terms.issue_price - float(margin or 0.0)
-        label = next(p.label for p in terms.spec.params if p.key == key)
-
-        def build(x: float) -> Any:
-            return terms.build({**terms.values, key: x})
-
-        solution, _ = solve_coupon_note(
-            build,
-            basket,
-            target,
-            SOLVE_BOUNDS[key],
-            terms.spread,
-            what=label.lower(),
-            n_paths=int(paths or 50_000),
-        )
-    except ValueError as exc:
-        return ui.error(str(exc)), None, ui.HIDDEN
-    error = f" ± {solution.std_error:.2f}" if solution.std_error is not None else ""
-    text = (
-        f"**{label} = {solution.value:.2f} %**{error} prices the note at {solution.price:.2f} % "
-        f"(target {target:.2f} %: issue price − margin)."
-    )
-    return (
-        dbc.Alert(dcc.Markdown(text), color="success", className="py-2 mb-1"),
-        {"key": key, "value": round(solution.value, 2)},
-        ui.SHOWN,
-    )
-
-
-def download_sheet(
-    n_clicks: int | None,
-    result: dict[str, Any] | None,
-    greeks: dict[str, Any] | None,
-    store: dict[str, Any] | None,
-    rows: Rows | None,
-    corr: Rows | None,
-    data: MarketData,
-    paths: Any,
-) -> Any:
-    """Product sheet of the priced note (with its Greeks once computed), as an HTML file."""
-    current = fingerprint(store, rows, corr, data, paths)
-    if not n_clicks or _fresh(result, current):
-        return dash.no_update
-    assert result is not None
-    terms, basket = _setup(store, rows, corr, data)
-    fresh_greeks = greeks if not _fresh(greeks, current) else None
-    return sheet.download(coupon_sheet(terms, basket, result, fresh_greeks))
-
-
-def apply_solution(
-    n_clicks: int | None, solution: dict[str, Any] | None, ids: list[dict[str, str]]
-) -> list[Any]:
-    """Put the solved value in its term input."""
-    if not n_clicks or not solution:
-        return [dash.no_update] * len(ids)
-    return [solution["value"] if i["key"] == solution["key"] else dash.no_update for i in ids]
 
 
 # --- Callbacks ---------------------------------------------------------------------------------
@@ -826,23 +693,28 @@ def apply_solution(
 
 def register(app: dash.Dash) -> None:
     """Register the callbacks of the coupon note pages."""
-    store, data = State("product-store", "data"), State("market-data", "data")
-    rows, corr = State("cn-underlyings", "rowData"), State("cn-correlation", "rowData")
-    paths = State("cn-paths", "value")
+    # the results read what the Price button has fixed, the form what is being typed
+    store, data = State("product-store", "data"), State("priced-market", "data")
+    rows, corr = State("cn-priced-rows", "data"), State("cn-priced-corr", "data")
+    paths = State("cn-priced-paths", "data")
+    form_rows, form_corr = State("cn-underlyings", "rowData"), State("cn-correlation", "rowData")
     inputs = (
         Input("product-store", "data"),
-        Input("cn-underlyings", "rowData"),
-        Input("cn-correlation", "rowData"),
-        Input("market-data", "data"),
+        Input("cn-priced-rows", "data"),
+        Input("cn-priced-corr", "data"),
+        Input("priced-market", "data"),
+        Input("cn-priced-paths", "data"),
     )
     tab = Input("product-tabs", "active_tab")
+    result = Input("cn-result", "data")
+    greeks = Input("product-greeks", "data")
     app.callback(
         Output("cn-underlyings", "rowData"),
         Input("cn-add", "n_clicks"),
         Input("cn-remove", "n_clicks"),
         Input("cn-underlyings", "cellValueChanged"),
-        rows,
-        data,
+        form_rows,
+        State("market-data", "data"),
         prevent_initial_call=True,
     )(_edit_underlyings)
     app.callback(
@@ -853,71 +725,67 @@ def register(app: dash.Dash) -> None:
         Input("cn-underlyings", "rowData"),
         Input("cn-nearest", "n_clicks"),
         Input("cn-correlation", "cellValueChanged"),
-        rows,
-        corr,
+        form_rows,
+        form_corr,
     )(_correlation_view)
     app.callback(
+        Output("cn-priced-rows", "data"),
+        Output("cn-priced-corr", "data"),
+        Output("cn-priced-paths", "data"),
+        Input("price-run", "n_clicks"),
+        form_rows,
+        form_corr,
+        State("cn-paths", "value"),
+        prevent_initial_call=True,
+    )(priced_underlyings)
+    app.callback(
+        Output("cn-price-status", "children"),
+        Input("cn-underlyings", "rowData"),
+        Input("cn-correlation", "rowData"),
+        Input("cn-paths", "value"),
+        Input("product-store", "data"),
+        rows,
+        corr,
+        paths,
+    )(underlyings_status)
+    app.callback(
         Output("cn-result", "data"),
-        Output("cn-kpis", "children"),
-        Input("cn-price", "n_clicks"),
-        store,
-        rows,
-        corr,
-        data,
-        paths,
-    )(price_view)
-    app.callback(Output("cn-payoff", "children"), *inputs, tab)(payoff_view)
-    app.callback(Output("cn-legs", "children"), Input("cn-result", "data"), *inputs, paths, tab)(
-        legs_view
+        *inputs,
+        running=[(Output("price-run", "disabled"), True, False)],
+    )(price_compute)
+    app.callback(Output("product-greeks", "data"), result, store, rows, corr, data, paths)(
+        greeks_compute
     )
-    app.callback(Output("cn-life", "children"), Input("cn-result", "data"), *inputs, paths, tab)(
-        life_view
-    )
+    app.callback(Output("cn-kpis", "children"), result, *inputs)(price_headline)
     app.callback(
-        Output("cn-greeks", "data"),
-        Output("cn-greeks-kpis", "children"),
-        Input("cn-result", "data"),
-        store,
-        rows,
-        corr,
-        data,
-        paths,
-    )(greeks_compute)
-    app.callback(
-        Output("cn-greeks-result", "children"), Input("cn-greeks", "data"), *inputs, paths, tab
-    )(greeks_view)
-    app.callback(
-        Output("cn-solve-result", "children"),
-        Output("cn-solution", "data"),
-        Output("cn-solve-apply", "style"),
-        Input("cn-solve-run", "n_clicks"),
-        store,
-        rows,
-        corr,
-        data,
-        paths,
-        State("cn-solve-term", "value"),
-        State("cn-solve-margin", "value"),
-    )(solve_view)
-    app.callback(
-        Output(ui.term(ALL), "value", allow_duplicate=True),  # type: ignore[arg-type]
-        Input("cn-solve-apply", "n_clicks"),
-        State("cn-solution", "data"),
-        State(ui.term(ALL), "id"),  # type: ignore[arg-type]
-        prevent_initial_call=True,
-    )(apply_solution)
-    app.callback(
-        Output("cn-sheet-download", "data"),
-        Input("cn-sheet-button", "n_clicks"),
+        Output("cn-kpis", "children", allow_duplicate=True),
         State("cn-result", "data"),
-        State("cn-greeks", "data"),
+        greeks,
         store,
         rows,
         corr,
         data,
         paths,
         prevent_initial_call=True,
-    )(download_sheet)
+    )(kpis_view)
+    app.callback(Output("cn-payoff", "children"), result, *inputs, tab)(payoff_view)
+    app.callback(Output("cn-coupon", "children"), result, *inputs, tab)(coupon_view)
+    app.callback(Output("cn-decomposition", "children"), result, greeks, *inputs, tab)(
+        decomposition_view
+    )
+    app.callback(
+        Output("cn-profile", "data"),
+        greeks,
+        State("cn-profile", "data"),
+        store,
+        rows,
+        corr,
+        data,
+        tab,
+    )(profile_compute)
+    app.callback(
+        Output("cn-greeks-result", "children"), greeks, Input("cn-profile", "data"), *inputs, tab
+    )(greeks_view)
 
 
 __all__ = ["coupon_page", "register"]

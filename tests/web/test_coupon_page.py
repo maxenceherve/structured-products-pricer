@@ -6,14 +6,16 @@ import dash
 import numpy as np
 import pytest
 
+from spricer.conventions import to_desk
 from web import coupon_page as page
-from web import registry
+from web import registry, risk_panel, sheet_route, ui
 from web.app import kpis
 from web.coupons import (
     CATALOG,
     MAX_UNDERLYINGS,
     add_underlying,
     basket_of,
+    brick_rows,
     build_coupon,
     correlation_matrix,
     correlation_rows,
@@ -33,11 +35,7 @@ def text_of(component) -> str:
 
 
 def store(name: str, **terms):
-    return {
-        "slug": registry.slugify(name),
-        "terms": default_terms(CATALOG[name]) | terms,
-        "vols": [],
-    }
+    return {"slug": registry.slugify(name), "terms": default_terms(CATALOG[name]) | terms}
 
 
 def two_underlyings():
@@ -218,170 +216,266 @@ def test_correlation_view():
 @pytest.fixture(scope="module")
 def priced():
     s, data = store("Phoenix autocall"), default_data()
-    result, headline = page.price_view(1, s, ONE, [], data, N)
-    return s, data, result, headline
+    result = page.price_compute(s, ONE, [], data, N)
+    greeks = page.greeks_compute(result, s, ONE, [], data, N)
+    return s, data, result, greeks
 
 
-def test_price_view(priced):
-    s, data, result, headline = priced
-    text = text_of(headline)
-    assert "Issuer margin" in text
-    assert "Probability of loss" in text
+def test_the_price_follows_the_button(priced):
+    s, data, result, _ = priced
     assert result["fingerprint"] == page.fingerprint(s, ONE, [], data, N)
-    assert page.price_view(0, s, ONE, [], data, N) == (dash.no_update, dash.no_update)
-    result, headline = page.price_view(1, None, ONE, [], data, N)
-    assert result is None
-    assert "Set the terms" in text_of(headline)
-    _, headline = page.price_view(1, {"slug": "call", "terms": {}}, ONE, [], data, N)
-    assert "no coupon note" in text_of(headline)
+    assert page.price_compute(None, ONE, [], data, N) is None  # nothing before the Price button
+    assert ui.NOT_PRICED in text_of(page.kpis_view(None, None, None, ONE, [], data, N))
+    refused = page.price_compute({"slug": "call"}, ONE, [], data, N)
+    assert refused is not None
+    assert "no coupon note" in refused["error"]
     assert kpis(s, data) is dash.no_update
 
 
+def test_headline_is_the_same_as_on_every_product(priced):
+    s, data, result, greeks = priced
+    text = text_of(page.kpis_view(result, greeks, s, ONE, [], data, N))
+    for piece in (
+        "Price",
+        "Delta",
+        "Gamma",
+        "Vega",
+        "Theta",
+        "Rho",
+        "Issuer margin",
+        "product sheet",
+    ):
+        assert piece in text
+    assert "..." in text_of(page.price_headline(result, s, ONE, [], data, N))
+    assert page.PRICING in text_of(page.kpis_view(None, None, s, ONE, [], data, N))
+    assert page.PRICING in text_of(page.kpis_view(result, None, s, ONE, [], data, 5_000))
+    error = {"error": "The spot must be positive"}
+    assert "spot" in text_of(page.kpis_view(error, None, s, ONE, [], data, N))
+
+
 def test_payoff_tab(priced):
-    s, data, _, _ = priced
-    assert page.payoff_view(s, ONE, [], data, "legs") is dash.no_update
-    text = text_of(page.payoff_view(s, ONE, [], data, "payoff"))
-    assert "With memory" in text
-    path = store("Barrier reverse convertible", monitoring="continuous")
-    text = text_of(page.payoff_view(path, [], [], data, "payoff"))  # no underlying: today 100 %
-    assert "Barrier breached during the life" in text
-    assert "With memory" not in text
-    assert "no coupon note" in text_of(page.payoff_view(None, ONE, [], data, "payoff"))
-    assert "Set the terms" in text_of(
-        page.payoff_view({"slug": "phoenix-autocall"}, ONE, [], data, "payoff")
-    )
-
-
-def test_legs_and_life_tabs(priced):
     s, data, result, _ = priced
-    assert page.legs_view(result, s, ONE, [], data, N, "payoff") is dash.no_update
-    assert "Click Price" in text_of(page.legs_view(None, s, ONE, [], data, N, "legs"))
-    assert "changed" in text_of(page.legs_view(result, s, ONE, [], data, 5_000, "legs"))
-    text = text_of(page.legs_view(result, s, ONE, [], data, N, "legs"))
-    assert "Capital at risk" in text
-    assert "Closed form" not in text  # an autocall has no closed form
-    assert page.life_view(result, s, ONE, [], data, N, "payoff") is dash.no_update
-    text = text_of(page.life_view(result, s, ONE, [], data, N, "life"))
-    assert "When does the note end" in text
-    assert "Observation schedule" in text
-    text = text_of(page.life_view(None, s, ONE, [], data, N, "life"))
-    assert "Click Price" in text
-    assert "no coupon note" in text_of(page.life_view(None, None, ONE, [], data, N, "life"))
+    assert page.payoff_view(result, s, ONE, [], data, N, "coupon") is dash.no_update
+    out = page.payoff_view(result, s, ONE, [], data, N, "payoff")
+    text = text_of(out)
+    assert "With memory" in text
+    assert "hence the step" in text
+    assert "Gain on the price paid" in text
+    assert "Breakeven" in text
+    # before the price, what is paid only
+    assert "Gain" not in text_of(page.payoff_view(None, s, ONE, [], data, N, "payoff")).replace(
+        "the gain", ""
+    )
+    path = store("Barrier reverse convertible", monitoring="continuous")
+    priced_path = page.price_compute(path, ONE, [], data, N)
+    text = text_of(page.payoff_view(priced_path, path, ONE, [], data, N, "payoff"))
+    assert "Capital, barrier breached during the life" in text
+    assert "Gain if breached" in text
+    assert "With memory" not in text
+    assert "hence the step" not in text  # a certain coupon: no step
+    no_rows = text_of(page.payoff_view(None, path, [], [], data, N, "payoff"))  # today 100 %
+    assert "today 100.0%" in no_rows
+    assert "no coupon note" in text_of(page.payoff_view(None, None, ONE, [], data, N, "payoff"))
     assert "Set the terms" in text_of(
-        page.life_view(None, {"slug": "phoenix-autocall"}, ONE, [], data, N, "life")
+        page.payoff_view(None, {"slug": "phoenix-autocall"}, ONE, [], data, N, "payoff")
     )
 
 
-@pytest.mark.parametrize(
-    ("monitoring", "phrase"), [("european", "noise"), ("continuous", "effect on the barrier")]
-)
-def test_a_brc_on_one_underlying_is_checked_against_its_closed_form(monitoring, phrase):
-    s, data = store("Barrier reverse convertible", monitoring=monitoring), default_data()
-    result, _ = page.price_view(1, s, ONE, [], data, 20_000)
-    text = text_of(page.legs_view(result, s, ONE, [], data, 20_000, "legs"))
-    assert "Monte Carlo \\u2212 closed form" in text
-    assert phrase in text
+@pytest.mark.parametrize("name", list(CATALOG))
+def test_the_capital_is_flat_above_the_barrier_on_every_coupon_note(name):
+    terms = build_coupon(CATALOG[name], store(name)["terms"])
+    note = terms.note
+    above = np.linspace(note.protection_barrier + 0.5, 190.0, 60)
+    capital = note.redemption(above, False)
+    assert np.all(capital[above >= note.put_strike] == 100.0)
+    # the chart draws that line first, the final coupon apart
+    out = page.payoff_view(None, store(name), ONE, [], default_data(), N, "payoff")
+    fig = out.children[0].figure
+    assert fig.data[-1].name == "Capital paid back"
+    assert fig.data[-2].name == "With the final coupon"
 
 
-def test_greeks_after_the_price():
+def test_coupon_tab_shows_only_the_observation_schedule(priced):
+    s, data, result, _ = priced
+    assert page.coupon_view(result, s, ONE, [], data, N, "payoff") is dash.no_update
+    out = page.coupon_view(result, s, ONE, [], data, N, "coupon")
+    text = text_of(out)
+    assert "Observation schedule" in text
+    assert "Call probability" in text
+    assert "Graph" not in text
+    assert "no coupon note" in text_of(page.coupon_view(None, None, ONE, [], data, N, "coupon"))
+    assert "Set the terms" in text_of(
+        page.coupon_view(None, {"slug": "phoenix-autocall"}, ONE, [], data, N, "coupon")
+    )
+    # before the price: the dates, no probability
+    assert text_of(page.coupon_view(None, s, ONE, [], data, N, "coupon")).count("0.25") > 0
+
+
+def test_tabs_are_those_of_every_product(priced):
+    text = text_of(page.coupon_page(registry.BY_SLUG["phoenix-autocall"]))
+    for tab in ("Payoff", "Coupon", "Decomposition", "Greeks", "Hedging"):
+        assert f'"label": "{tab}"' in text
+    assert "Monte Carlo paths" in text
+    assert '"id": "cn-price"' not in text
+
+
+def test_decomposition_tab_has_the_columns_of_every_product(priced):
+    s, data, result, greeks = priced
+    assert page.decomposition_view(result, greeks, s, ONE, [], data, N, "payoff") is dash.no_update
+    text = text_of(page.decomposition_view(result, greeks, s, ONE, [], data, N, "decomposition"))
+    for column in ("Brick", "Terms", "Price (%)", "Delta (%)", "Theta (%)", "Rho (%)"):
+        assert column in text
+    assert "Short down-and-in put (capital at risk)" in text
+    assert "par if at or above 100 %" in text
+    assert "memory" in text
+    no_greeks = text_of(page.decomposition_view(result, None, s, ONE, [], data, N, "decomposition"))
+    assert page.COMPUTING in no_greeks
+    assert page.PRICING in text_of(
+        page.decomposition_view(None, None, s, ONE, [], data, N, "decomposition")
+    )
+    error = {"error": "The spot must be positive"}
+    assert "spot" in text_of(
+        page.decomposition_view(error, None, s, ONE, [], data, N, "decomposition")
+    )
+    rc = store("Reverse convertible")
+    rc_result = page.price_compute(rc, ONE, [], data, N)
+    assert "Redemption at call" not in text_of(
+        page.decomposition_view(rc_result, None, rc, ONE, [], data, N, "decomposition")
+    )
+
+
+def test_bricks_add_up_to_the_note(priced):
+    s, _, result, greeks = priced
+    terms = build_coupon(CATALOG["Phoenix autocall"], s["terms"])
+    rows = brick_rows(terms.note, result, greeks)
+    assert sum(r["Price (%)"] for r in rows[:-1]) == pytest.approx(rows[-1]["Price (%)"])
+    for key in ("Delta (%)", "Gamma (%)", "Vega (%)", "Theta (%)", "Rho (%)"):
+        assert sum(r[key] for r in rows[:-1]) == pytest.approx(rows[-1][key], abs=1e-9)
+
+
+def test_greeks_tab():
     s, data = store("Reverse convertible"), default_data()
     rows, corr = two_underlyings()
-    assert page.greeks_compute(None, s, rows, corr, data, N) == (None, "")
-    result, _ = page.price_view(1, s, rows, corr, data, N)
-    stale = page.greeks_compute(result, s, rows, corr, data, 5_000)
-    assert stale == (None, "")
-    greeks, headline = page.greeks_compute(result, s, rows, corr, data, N)
-    assert "Delta (all underlyings)" in text_of(headline)
+    assert page.greeks_compute(None, s, rows, corr, data, N) is None
+    result = page.price_compute(s, rows, corr, data, N)
+    assert page.greeks_compute(result, s, rows, corr, data, 5_000) is None  # not these terms
+    greeks = page.greeks_compute(result, s, rows, corr, data, N)
+    assert greeks is not None
     assert len(greeks["assets"]) == 2
-    assert page.greeks_view(greeks, s, rows, corr, data, N, "payoff") is dash.no_update
-    text = text_of(page.greeks_view(greeks, s, rows, corr, data, N, "greeks-hedging"))
-    assert "most exposed" in text
-    assert "delta hedge" in text
-    assert "Buy" in text
-    assert "Click Price" in text_of(
-        page.greeks_view(None, s, rows, corr, data, N, "greeks-hedging")
-    )
+    view = page.greeks_view
+    assert view(greeks, None, s, rows, corr, data, N, "payoff") is dash.no_update
+    assert page.COMPUTING in text_of(view(None, None, s, rows, corr, data, N, "greeks"))
+    # the Greeks first, the chart once the curves are there
+    text = text_of(view(greeks, None, s, rows, corr, data, N, "greeks"))
+    assert "Per underlying" in text
+    assert page.COMPUTING in text
+    compute = page.profile_compute
+    assert compute(greeks, None, s, rows, corr, data, "payoff") is dash.no_update
+    assert compute(None, None, s, rows, corr, data, "greeks") is dash.no_update
+    profile = compute(greeks, None, s, rows, corr, data, "greeks")
+    assert compute(greeks, profile, s, rows, corr, data, "greeks") is dash.no_update
+    out = view(greeks, profile, s, rows, corr, data, N, "greeks")
+    text = text_of(out)
+    for greek in ("Delta", "Gamma", "Vega", "Theta", "Rho"):
+        assert f'"children": "{greek}"' in text
+    assert "standard error" in text
+    assert page.COMPUTING not in text
+
+
+def test_a_theta_that_cannot_be_computed_says_so():
+    s = store("Reverse convertible", maturity=1.0, elapsed=0.25 - 0.5 / 365)
+    data = default_data()
     # issued a quarter ago, minus half a day: the next observation is within a day
-    alive = store("Reverse convertible", maturity=1.0, elapsed=0.25 - 0.5 / 365)
-    result, _ = page.price_view(1, alive, ONE, [], data, N)
-    greeks, headline = page.greeks_compute(result, alive, ONE, [], data, N)
-    assert "observation within a day" in text_of(headline)
-    text = text_of(page.greeks_view(greeks, alive, ONE, [], data, N, "greeks-hedging"))
-    assert "not computed" in text
-    # a short note: the issuer sells shares
-    short_delta = {
-        "fingerprint": "x",
-        "assets": [{"name": "A", "delta": [-10.0, 1.0], "gamma": [0.0, 0.1], "vega": [0.0, 0.1]}],
-        "theta": [0.0, 0.0],
-        "rho": [0.0, 0.0],
-        "spots": [100.0],
-        "notional": 1e6,
-    }
-    current = page.fingerprint(alive, ONE, [], data, N)
-    text = text_of(
-        page.greeks_view(
-            short_delta | {"fingerprint": current}, alive, ONE, [], data, N, "greeks-hedging"
-        )
+    result = page.price_compute(s, ONE, [], data, N)
+    greeks = page.greeks_compute(result, s, ONE, [], data, N)
+    assert greeks is not None
+    assert greeks["theta"] is None
+    text = text_of(page.kpis_view(result, greeks, s, ONE, [], data, N))
+    assert "n/a" in text
+    profile = page.profile_compute(greeks, None, s, ONE, [], data, "greeks")
+    assert "falls within the next day" in text_of(
+        page.greeks_view(greeks, profile, s, ONE, [], data, N, "greeks")
     )
-    assert "Sell" in text
+    text = text_of(page.decomposition_view(result, greeks, s, ONE, [], data, N, "decomposition"))
+    assert "Total" in text
 
 
 def test_greeks_errors_after_a_price():
     s, data = store("Reverse convertible"), default_data()
-    result, _ = page.price_view(1, s, ONE, [], data, N)
+    result = page.price_compute(s, ONE, [], data, N)
+    assert result is not None
     bad = default_data() | {"spot": None}
     broken = result | {"fingerprint": page.fingerprint(s, ONE, [], bad, N)}
-    greeks, headline = page.greeks_compute(broken, s, ONE, [], bad, N)
-    assert greeks is None
-    assert "spot" in text_of(headline)
+    assert page.greeks_compute(broken, s, ONE, [], bad, N) is None
 
 
-def test_coupon_greeks_reading_cases():
-    from web import explain as ex
+def test_the_issuer_hedges_each_underlying():
+    s, data = store("Barrier reverse convertible"), default_data()
+    rows, corr = two_underlyings()
+    result = page.price_compute(s, rows, corr, data, N)
+    greeks = page.greeks_compute(result, s, rows, corr, data, N)
+    assert greeks is not None
+    args = ("call", 100.0, 0.25, "put", 100.0, 2.0)
+    out, _, _ = risk_panel.static_view(s, data, greeks, risk_panel.TAB, "Delta + gamma", *args)
+    text = text_of(out)
+    assert "Issuer, short the note on Underlying 1" in text
+    assert "Issuer, short the note on Underlying 2" in text
+    assert "shares" in text
+    waiting, _, _ = risk_panel.static_view(s, data, None, risk_panel.TAB, "Delta", *args)
+    assert "being computed" in text_of(waiting)
+    subject = risk_panel.coupon_subjects(greeks, data)[0]
+    desk = to_desk(subject.greeks, spot=subject.market.spot, notional=100.0)
+    # the issuer is short: the holder's desk Greeks, with the opposite sign
+    assert 100.0 * float(desk.delta) == pytest.approx(-greeks["assets"][0]["delta"][0])
+    assert 100.0 * float(desk.gamma) == pytest.approx(-greeks["assets"][0]["gamma"][0])
+    assert float(desk.vega) == pytest.approx(-greeks["assets"][0]["vega"][0])
 
-    lines = ex.coupon_greeks(["A"], [-5.0], [0.2])
-    assert "loses" in lines[0]
-    assert "helps" in lines[0]
-    assert len(lines) == 2  # one underlying: no worst-of sentence
-    assert "hurts" not in ex.coupon_greeks(["A"], [5.0], [0.0])[0]
+
+def link(result, greeks, s, rows, corr, data):
+    """The token carried by the sheet link of a priced note."""
+    href = find_sheet_link(page.kpis_view(result, greeks, s, rows, corr, data, N))
+    return href.split("?s=", 1)[1]
 
 
-def test_solve_tab(priced):
-    s, data, _, _ = priced
-    out, solution, style = page.solve_view(0, s, ONE, [], data, N, "coupon_pa", 2.0)
-    assert solution is None
-    assert style["display"] == "none"
-    out, solution, style = page.solve_view(1, s, ONE, [], data, N, "coupon_pa", 2.0)
-    assert solution["key"] == "coupon_pa"
-    assert "target 98.00" in text_of(out)
-    assert style["display"] == "block"
-    out, solution, _ = page.solve_view(1, s, ONE, [], data, N, "strike", 2.0)
-    assert "Pick a term" in text_of(out)
-    ids = [{"type": "term", "key": "coupon_pa"}, {"type": "term", "key": "maturity"}]
-    assert page.apply_solution(1, {"key": "coupon_pa", "value": 7.5}, ids) == [7.5, dash.no_update]
-    assert page.apply_solution(None, None, ids) == [dash.no_update] * 2
+def find_sheet_link(component):
+    for child in component.children:
+        if getattr(child, "id", None) == "sheet-link":
+            return child.href
+    raise AssertionError("no link to the sheet")
 
 
 def test_product_sheet(priced):
-    s, data, result, _ = priced
-    assert page.download_sheet(0, result, None, s, ONE, [], data, N) is dash.no_update
-    assert page.download_sheet(1, result, None, s, ONE, [], data, 5_000) is dash.no_update
-    out = page.download_sheet(1, result, None, s, ONE, [], data, N)
-    assert out["filename"] == "phoenix-autocall-product-sheet.html"
-    assert "Observation schedule" in out["content"]
-    assert "Early redemption" in out["content"]
-    greeks, _ = page.greeks_compute(result, s, ONE, [], data, N)
-    out = page.download_sheet(1, result, greeks, s, ONE, [], data, N)
-    assert "Delta Underlying 1" in out["content"]
+    s, data, result, greeks = priced
+    content = sheet_route.sheet_html(sheet_route.decode(link(result, None, s, ONE, [], data)))
+    assert "phoenix-autocall-product-sheet.html" in content
+    assert "Observation schedule" in content
+    assert "Early redemption" in content
+    assert "Delta Underlying 1" not in content
+    state = sheet_route.decode(link(result, greeks, s, ONE, [], data))
+    content = sheet_route.sheet_html(state)
+    assert "Delta Underlying 1" in content
+    assert "Theta (per day)" in content
+    assert "Rho (per bp)" in content
+    assert "Brick decomposition" in content
 
 
 def test_coupon_sheets_name_their_risks():
     data = default_data()
     rows, corr = two_underlyings()
     s = store("Barrier reverse convertible", monitoring="continuous")
-    result, _ = page.price_view(1, s, rows, corr, data, N)
-    content = page.download_sheet(1, result, None, s, rows, corr, data, N)["content"]
+    result = page.price_compute(s, rows, corr, data, N)
+    content = sheet_route.sheet_html(sheet_route.decode(link(result, None, s, rows, corr, data)))
     assert "Paid, barrier breached" in content
     assert "Worst-of" in content
     assert "Early redemption" not in content
     assert "Yield enhancement" in content
+
+
+def test_the_price_button_fixes_the_underlyings_priced():
+    assert page.priced_underlyings(0, ONE, [], N) == (dash.no_update,) * 3
+    assert page.priced_underlyings(1, ONE, [], N) == (ONE, [], N)
+    s = store("Phoenix autocall")
+    status = page.underlyings_status
+    assert status(ONE, [], N, None, None, None, None) == ""  # not priced yet
+    assert status(ONE, [], N, s, ONE, [], N) == ""
+    assert ui.STALE in text_of(status(ONE, [], 5_000, s, ONE, [], N))
