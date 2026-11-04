@@ -153,6 +153,11 @@ a:hover { color: var(--ink); }
 .result-table td { padding: 7px 12px; border-color: var(--rule-soft); white-space: nowrap; }
 .result-table td:not(:first-child) { text-align: right; }
 .result-table th:not(:first-child) { text-align: right; }
+/* every column in view: the names and terms wrap, the numbers do not */
+.compact-table { font-size: 13px; }
+.compact-table th, .compact-table td { padding: 7px 6px; }
+.compact-table td:nth-child(-n+2) { white-space: normal; }
+.compact-table td:nth-child(2) { color: var(--ink-soft); }
 /* totals are underlined twice, as in a ledger */
 .result-table .total-row td { font-weight: 600; border-top: 1px solid var(--ink); border-bottom: 3px double var(--ink); background: transparent; }
 .scenario-wrap { max-width: 520px; max-height: 432px; overflow-y: auto; border: 1px solid var(--rule); border-radius: 4px; }

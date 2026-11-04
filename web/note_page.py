@@ -119,9 +119,7 @@ def note_page(product: Product, prefilled: dict[str, float] | None = None) -> ht
         {
             "Payoff": dcc.Loading(
                 [
-                    dcc.Graph(
-                        id="note-payoff-graph", config={"displaylogo": False}, responsive=True
-                    ),
+                    ui.payoff_graph("note-payoff-graph"),
                     html.Div(id="note-payoff-notes"),
                 ]
             ),

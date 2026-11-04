@@ -360,3 +360,16 @@ def test_the_status_tells_when_the_numbers_are_out_of_date():
     assert ui.STALE in text_of(ui.price_status([2.0], data, store, term_ids, data))
     moved = data | {"spot": 90.0}
     assert ui.STALE in text_of(ui.price_status([1.0], moved, store, term_ids, data))
+
+
+def test_a_payoff_graph_keeps_its_height_when_its_tab_comes_back() -> None:
+    props = ui.payoff_graph("some-graph").to_plotly_json()["props"]
+    assert props["responsive"] is True
+    assert props["style"] == {"height": "450px"}
+
+
+def test_the_bricks_table_is_compact_and_the_others_are_not() -> None:
+    assert "compact-table" not in ui.table(["a"], [["b"]]).className
+    greeks = dict.fromkeys(ui.GREEK_CELLS, 1.0)
+    row = {"Brick": "Long call", "Terms": "K 100%", "Price (%)": 5.0, **greeks}
+    assert "compact-table" in ui.bricks_table([row]).className

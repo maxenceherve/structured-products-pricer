@@ -292,8 +292,14 @@ fig, ax = plt.subplots(figsize=(7, 3.8))
 for n, color in ((52, ORANGE), (252, BLUE)):
     sim = simulate_delta_hedge(call, flat, 1.0, realised_vol=0.20, rebalancings=n, n_paths=20_000)
     ax.hist(sim.pnl, bins=80, alpha=0.6, color=color, label=f"{n} rebalancings")
+    # Standard error of the std on independent antithetic pairs, by the delta method.
+    half = len(sim.pnl) // 2
+    squares = (sim.pnl - sim.pnl.mean()) ** 2
+    pairs = (squares[:half] + squares[half:]) / 2
+    std_error = pairs.std(ddof=1) / math.sqrt(half) / (2 * sim.std)
     print(f"{n:>3} rebalancings: mean {sim.mean.value:+.3f} ± {sim.mean.std_error:.3f}, "
-          f"std {sim.std:.3f} (Derman-Kamal {derman_kamal_std(vega, 0.20, n):.3f})")
+          f"std {sim.std:.3f} ± {std_error:.3f} "
+          f"(Derman-Kamal {derman_kamal_std(vega, 0.20, n):.3f})")
 ax.set(title="Delta-hedged long call, realised = implied = 20 %", xlabel="P&L (% of spot)")
 ax.legend()
 fig.tight_layout()

@@ -266,8 +266,8 @@ def gallery(query: str | None = None) -> html.Div:
                             html.H1("Structured Products Pricer", className="hero-title"),
                             html.P(
                                 "Price options and structured products on your own volatility "
-                                "smile: the payoff, the Greeks and what they mean, the hedge, a "
-                                "Monte Carlo check and a product sheet for each of them.",
+                                "smile: the payoff, the bricks, the Greeks and what they mean, the "
+                                "hedge and a product sheet for each of them.",
                                 className="hero-text",
                             ),
                         ]

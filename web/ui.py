@@ -125,8 +125,10 @@ def note(text: str) -> html.P:
     return html.P(text, className="field-help")
 
 
-def table(header: list[str], rows: list[list[Any]], total: bool = False) -> dbc.Table:
-    """A compact results table; ``total`` highlights the last row."""
+def table(
+    header: list[str], rows: list[list[Any]], total: bool = False, compact: bool = False
+) -> dbc.Table:
+    """A results table; ``total`` highlights the last row, ``compact`` fits many columns."""
     last = len(rows) - 1
     body = [
         html.Tr([html.Td(c) for c in row], className="total-row" if total and i == last else "")
@@ -138,7 +140,7 @@ def table(header: list[str], rows: list[list[Any]], total: bool = False) -> dbc.
         hover=True,
         responsive=True,
         size="sm",
-        className="result-table",
+        className="result-table compact-table" if compact else "result-table",
     )
 
 
@@ -227,7 +229,7 @@ def bricks_table(rows: Sequence[Mapping[str, Any]]) -> dbc.Table:
             cells.append("" if value is None else fmt(value, 4 if key[:2] in ("Th", "Rh") else 2))
         body.append(cells)
     header = ["Brick", "Terms", "Price (%)", *GREEK_CELLS]
-    return table(header, body, total=len(rows) > 1)
+    return table(header, body, total=len(rows) > 1, compact=True)
 
 
 def side_class(name: str) -> str:
@@ -257,6 +259,17 @@ def tab_bar(tabs: tuple[str, ...], first: str) -> dbc.Tabs:
         id="product-tabs",
         active_tab=first,
         className="mb-3",
+    )
+
+
+def payoff_graph(id_: str) -> dcc.Graph:
+    """The payoff chart of a tab that starts hidden: it takes its width when the tab shows.
+
+    The height is explicit: a responsive graph is 100 % of a parent that has none, so without it
+    the graph collapses when its tab comes back and the drawing spills over what follows.
+    """
+    return dcc.Graph(
+        id=id_, config={"displaylogo": False}, responsive=True, style={"height": "450px"}
     )
 
 

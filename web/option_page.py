@@ -108,7 +108,7 @@ def option_page(product: Product, prefilled: dict[str, float] | None = None) -> 
         {
             "Payoff": dcc.Loading(
                 [
-                    dcc.Graph(id="payoff-graph", config={"displaylogo": False}, responsive=True),
+                    ui.payoff_graph("payoff-graph"),
                     html.Div(id="payoff-notes"),
                 ]
             ),
