@@ -81,8 +81,6 @@ Around the pages:
 
 Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`).
 
-![Model risk: one volatility against the smile](docs/figures/model_risk_strip.png)
-
 | Claim | Number | Source |
 |---|---|---|
 | Continuous barrier closed forms (8 types) agree with QuantLib | relative gap below 1e-10 | `tests/test_barrier_closed_form.py` |
@@ -97,12 +95,6 @@ Every number below is produced by a test (`tests/`) or a notebook (`notebooks/`)
 | Taylor P&L explain (library) | residual third order (log-log slope 3.22), step-by-step attribution exact | notebook 03, `tests/test_risk_hedging.py` |
 | Every certificate and note is replicated by its bricks, and worth its expected payoff under the smile's density | payoff gap below 1e-9, value gap below 1e-6 relative | `tests/test_capital_protection.py`, `tests/test_participation.py` |
 | Quality | 1269 tests, 100 % branch coverage, mypy strict, CI on Linux and Windows | `tests/`, CI |
-
-| | |
-|---|---|
-| ![Smile and density](docs/figures/smile_density.png) | ![Local volatility](docs/figures/local_vol.png) |
-| ![Richardson](docs/figures/richardson.png) | ![Hedging P&L](docs/figures/hedging_pnl.png) |
-| ![CRN noise](docs/figures/crn_noise.png) | ![Taylor residual](docs/figures/taylor_residual.png) |
 
 ## Design choices
 
@@ -163,7 +155,7 @@ uv run ruff check
 uv run mypy
 ```
 
-To rewrite and execute the notebooks (figures saved to `docs/figures/`):
+To rewrite and execute the notebooks:
 
 ```bash
 uv run python scripts/build_notebooks.py
